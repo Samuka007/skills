@@ -403,10 +403,53 @@ Not "the checks passed" — what each check covers, so the gaps are visible:
 | cross-platform identity | same file, sha256 computed under WSL and Git Bash, equal |
 | auto-spawn a terminal | Windows Git Bash: verified end-to-end. WSL: verified. Pure Linux: no spawn exists anymore (trap 42) — headless runs print the staged pipeline. |
 | `package` launcher | generated on Linux, then run by hand in a user terminal: fzf opens over screened candidates, ENTER finalizes and verifies. |
+| `pick-sessions.sh` (the one-command entry) | real PTY under tmux, Linux: the output-directory confirmation is answered, the in-command scan is asserted through its own artifacts, an unscreened run pre-selects nothing, ctrl-a + TAB then finalize + verify, the screened hand-off shows the suggestion and pre-selects its keeps, ESC aborts without writing. (2026-09-13: the suite had been red since it was written — see "Why the picker suites drift" below.) |
 | `--test-spawn` harness | tmux: session created detached, driven via send-keys, read back via capture-pane. zellij: the session is created through a maximized Windows Terminal window (its client — a clientless session dumps blank, trap 49), driven via send-keys, read back via dump-screen, reclaimed by the printed cleanup command. Both verified 2026-09-13; the zellij branch had been dead until then and failed silently. |
 
 Known blind spots: macOS has never been run (only the BSD `stat`/`shasum`
 branches were exercised via a stub).
+
+### Why the picker suites drift (read before changing the launch surface)
+
+`test/test-pick-tmux.sh` was red from the day it was written and stayed red
+through three later changes to the entry point, because its assertions
+described a picker that never shipped a matching behaviour:
+
+- `66bcc07` added the picker and this suite together. The suite assumed
+  "everything begins selected" and typed one `TAB`; that commit's picker
+  already left everything unselected and printed "no screening ran; nothing
+  is pre-selected". No shipped revision ever had `start:select-all` (the
+  only occurrence of that string is the picker comment explaining why it was
+  rejected). The phase-2 count could therefore hold only on a scan that
+  returned exactly 2 candidates, and the phase-1 check for `agent suggests`
+  could not hold at all: a fresh scan writes no suggestion — no `screen.tsv`
+  at all in that commit, an empty scaffold from `abe2f92` — and the preview
+  prints that line only when a screening exists.
+- `65a1fab` added the output-directory confirmation. The suite launched the
+  picker with `-o DIR` and began typing; the prompt now sits between the
+  launch and fzf, so every later assertion read a pane still waiting for an
+  answer. `test-outdir-tmux.sh` was written by that same commit for the new
+  behaviour, while the old suite kept its old expectations.
+
+Nothing caught the drift because no job runs these suites: each is run by
+hand, at most once, on the machine of whoever wrote it. One near miss is
+worth naming: `test/ux-grounding.sh` survived the prompt change by accident
+— it pipes the picker's stdout through `tee`, so `-t 1` is false and the
+prompt is skipped — which also means that suite does not cover the prompt.
+
+The rules, so the next change does not repeat it:
+
+- **The launch surface of `pick-sessions.sh` is asserted verbatim in
+  `test/`.** The prompt text and its order, `[N candidates; M pre-selected]`,
+  the fzf header, `kept N of M`, `verified: N/N copies byte-identical` and
+  `aborted — nothing written` all appear there as literal strings. Change one
+  in the script and the suites must change in the same commit;
+  `grep -rn "pre-selected\|ENTER confirm\|quit >" test/` finds the call sites.
+- **A suite that drives the picker must answer the prompt** (Enter) or pass
+  `-y`. Anything else leaves every assertion reading the prompt pane.
+- **New launch-path behaviour gets a test in the same commit**, and the
+  suites whose launch path changed are re-run on the real PTY — the coverage
+  table above is a claim, and a suite that never runs cannot falsify it.
 
 ### Driving the TUI from a script
 

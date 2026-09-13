@@ -49,7 +49,7 @@ if grep -q "keep selected" <<<"$screen"; then ok "fzf TUI rendered"; else bad "f
 if grep -qE "claude|codex" <<<"$screen"; then ok "candidate rows visible"; else bad "no candidate rows on screen"; fi
 
 echo
-echo "--- 2. select the first two rows and accept (DOWN, TAB, DOWN, TAB, ENTER) ---"
+echo "--- 2. ctrl-a selects all, ctrl-d clears, TAB marks one, ENTER accepts ---"
 tmux send-keys -t "$SESS" C-a        # ctrl-a selects all bound in the script
 sleep 1
 screen_all="$(tmux capture-pane -p -t "$SESS")"
