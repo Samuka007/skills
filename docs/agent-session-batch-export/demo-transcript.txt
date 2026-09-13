@@ -1,0 +1,119 @@
+Recorded demo — agent-session-batch-export picker (issue #4)
+Reproduce: bash demo.sh   ·  Interactive replay: asciinema play demo.cast
+
+================ STEP 1: review — screening pre-selected 2 rows ================
+>                                                           ╭────────────────────────────────────────────────────────────────────────────────────────╮
+  4/4 (2) ───────────────────────────────────────────────── │ claude  /tmp/asbe-demo/sessions/s1.jsonl                                               │
+  TAB mark · ENTER confirm · ESC abort · shift-↑/↓ preview  │ size: 1643 bytes   events: 22                                                          │
+  [4 candidates; 2 pre-selected]  columns: agent · cwd · ·· │ agent suggests: keep — multi-stage cleanup design with real decisions                  │
+▌┃claude  /home/demo/wanwei-cpt   1643    22      Plan th·· │                                                                                        │
+▌┃codex   /home/demo/loadrig      2317    19      Balance·· │ --- opening prose ---                                                                  │
+▌ claude  /home/demo/misc 346     2       Speed up the em·· │ Plan the ClickHouse soft-delete mask purge: which partitions still carry deleted rows, │
+▌ claude  /home/demo/misc 124     2       test    /tmp/as·· │ ↳  and when can APPLY DELETED MASK run safely                                          │
+                                                            │ Two parts still carry masks: 2026-07 and 2026-08. Propose per-partition APPLY at 03:00 │
+                                                            │ ↳ , idempotent, verify via system.parts afterwards.                                    │
+                                                            │ filler detail line 1                                                                   │
+                                                            │ noted detail line 1                                                                    │
+                                                            │ filler detail line 2                                                                   │
+                                                            │ noted detail line 2                                                                    │
+                                                            │ filler detail line 3                                                                   │
+                                                            │ noted detail line 3                                                                    │
+                                                            │ filler detail line 4                                                                   │
+                                                            │ noted detail line 4                                                                    │
+                                                            │ filler detail line 5                                                                   │
+                                                            │ noted detail line 5                                                                    │
+                                                            │ filler detail line 6                                                                   │
+                                                            │ noted detail line 6                                                                    │
+                                                            │ filler detail line 7                                                                   │
+                                                            │ noted detail line 7                                                                    │
+                                                            │ filler detail line 8                                                                   │
+                                                            │ noted detail line 8                                                                    │
+                                                            │ filler detail line 9                                                                   │
+                                                            │ noted detail line 9                                                                    │
+                                                            │ filler detail line 10                                                                  │
+                                                            │ noted detail line 10                                                                   │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            ╰────────────────────────────────────────────────────────────────────────────────────────╯
+
+======= STEP 2: TAB override — drop the codex pick, add the pgvector session =======
+>                                                           ╭────────────────────────────────────────────────────────────────────────────────────────╮
+  4/4 (2) ───────────────────────────────────────────────── │ claude  /tmp/asbe-demo/sessions/s3.jsonl                                               │
+  TAB mark · ENTER confirm · ESC abort · shift-↑/↓ preview  │ size: 346 bytes   events: 2                                                            │
+  [4 candidates; 2 pre-selected]  columns: agent · cwd · ·· │ agent suggests: drop — one-shot question, short answer                                 │
+▌┃claude  /home/demo/wanwei-cpt   1643    22      Plan th·· │                                                                                        │
+▌ codex   /home/demo/loadrig      2317    19      Balance·· │ --- opening prose ---                                                                  │
+▌┃claude  /home/demo/misc 346     2       Speed up the em·· │ Speed up the embedding backfill: the pgvector writes fall behind after every batch     │
+▌ claude  /home/demo/misc 124     2       test    /tmp/as·· │ The writer is row-by-row INSERT; switch to COPY per 512-row chunk and the backfill sho │
+                                                            │ ↳ uld track real time. Re-measure one batch before scaling out.                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            │                                                                                        │
+                                                            ╰────────────────────────────────────────────────────────────────────────────────────────╯
+
+=============== STEP 3: ENTER — decisions written, finalize + verification ===============
+
+skills on  master [?] ❯ cd /home/nixos/workspace/skills
+bash skills/agent-session-batch-export/scripts/pick-sessions.sh -o /tmp/asbe-demo/curated-demo -y --review-only
+
+skills on  master [?] ❯ bash skills/agent-session-batch-export/scripts/pick-sessions.sh -o /tmp/asbe-demo/curated-demo -y --review-only
+output directory: /tmp/asbe-demo/curated-demo
+
+== pick ================================================================
+   2 rows are PRE-SELECTED at the top — the screening's picks.
+   TAB any of them to drop it, or TAB a lower row to add it.
+   (2 rejected rows follow below, unselected.)
+   TAB    mark / unmark the highlighted row (stays put)
+   ENTER  confirm  (marked rows are kept)        ESC  abort
+   ctrl-a all   ctrl-d none      ctrl-o hide/show preview
+   shift-↑/↓ scroll preview   PgUp/PgDn by page   alt-↑/↓ top/bottom
+   (the preview cannot take focus — fzf has no such concept — so it is
+    scrolled by keys, never by tabbing into it)
+========================================================================
+
+
+== kept 2 of 4 ==
+kept 2 sessions -> /tmp/asbe-demo/curated-demo/keep
+manifest: /tmp/asbe-demo/curated-demo/manifest.json
+
+verify every copy is byte-identical:
+  jq -r '.[] | "\(.source)\t\(.kept_as)"' /tmp/asbe-demo/curated-demo/manifest.json > /tmp/pairs.tsv
+  while IFS=$'\t' read -r s d; do d="${d%$'\r'}"; cmp -s "$s" "$d" || echo "MISMATCH $s"; done < /tmp/pairs.tsv
+
+verified: 2/2 copies byte-identical to their originals
+corpus:  /tmp/asbe-demo/curated-demo/keep
+manifest: /tmp/asbe-demo/curated-demo/manifest.json
+
+skills on  master [?] took 4s ❯
