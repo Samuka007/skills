@@ -36,3 +36,11 @@ at from here.
   non-interactive check and only surfaced under a real tmux + fzf.
 - **One writer per file.** Sibling tasks are given disjoint file scopes; shared
   files (SKILL.md, the scripts) have exactly one owner at a time.
+- **The funnel does not pre-fill `suggested`.** After `run --in-place`, the
+  rebuilt `screen.tsv` has empty suggestion columns, so the picker shows the
+  survivors with nothing pre-selected. Considered pre-filling them with
+  `suggested=keep, reason="funnel survivor"` and rejected: the column records a
+  judgement made by reading the session, and a mechanical stage passing it is a
+  different claim — merging the two makes the column unusable as a record of
+  which is which. The convenience the pre-fill would buy is one keystroke
+  (`ctrl-a` selects all rows in the picker, then ENTER).

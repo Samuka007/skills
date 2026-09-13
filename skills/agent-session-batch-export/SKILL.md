@@ -91,13 +91,13 @@ Each stage has one completion criterion:
 A deterministic pre-filter may already have run between `scan` and you. When it
 has, its survivors **are** `candidates.tsv` — the full scan is archived beside
 them as `candidates.full.tsv` — and `screen.tsv` was rebuilt for exactly those
-rows, with the same `suggested`/`reason` columns to fill. The funnel's
-recommendation travels in `screen.tsv`'s `suggested` column: its survivors are
-the rows it recommends for attention, and the rows you mark `keep` there are
-what the picker pre-selects and `--yolo` exports. Everything downstream —
-`review`, `finalize`, the gate — reads the same files either way. The engine is
-repo-only (`skills/trajectory-funnel/scripts/funnel.py`) and does not ship with
-this skill.
+rows, with its `suggested`/`reason` columns left empty for the screening step.
+The funnel's recommendation is the row set itself: those survivors are the
+sessions it judged worth attention, and screening them is still yours to do. The
+rows you mark `keep` are what the picker pre-selects and what `--yolo` exports.
+Everything downstream — `review`, `finalize`, the gate — reads the same files
+either way. The engine is repo-only
+(`skills/trajectory-funnel/scripts/funnel.py`) and does not ship with this skill.
 
 ## Screening (stage 2)
 
