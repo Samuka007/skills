@@ -231,7 +231,10 @@ spawn_terminal() {
 
 if ! have_tty; then
   if [[ $IN_TERMINAL -eq 1 ]]; then
-    echo "still no terminal — falling back to the TSV workflow" >&2
+    # We were spawned into a terminal but stdout is not a tty — e.g. someone
+    # redirected it to a log. fzf opens /dev/tty on its own, so the picker still
+    # works; do not claim we are falling back when we are not.
+    echo "note: stdout is not a tty; fzf will use /dev/tty directly" >&2
   elif spawn_terminal; then
     # The window owns the rest of the run; this process is done. We cannot
     # observe the child's progress from here, so we do not pretend to: the
