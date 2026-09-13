@@ -16,10 +16,17 @@
       # needs a real PTY to be tested honestly: `--ui tsv` can be exercised by
       # piping, but the interactive path only proves itself under a terminal you
       # can drive and read back (tmux send-keys + capture-pane).
+      #
+      # python tooling serves skills/trajectory-funnel/scripts/funnel.py. The
+      # DISTRIBUTED artifact stays standard-library-only (zero deps for users);
+      # ty (type check, astral) and ruff (lint/format) are DEV-ONLY gates.
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           pkgs.tmux
           pkgs.shellcheck
+          pkgs.ty
+          pkgs.ruff
+          pkgs.python312
         ];
       };
     };

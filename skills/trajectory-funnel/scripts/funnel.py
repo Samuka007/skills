@@ -64,7 +64,18 @@ PRESETS: dict[str, dict] = {
         "require_end_turn": True,
         "min_user_msg_chars": 20,
         "max_first_msg_chars": 4000,
-        "topic_keywords": ["ppt", "报告", "汇报", "总结", "论文", "润色", "翻译", "改写", "撰写", "方案"],
+        "topic_keywords": [
+            "ppt",
+            "报告",
+            "汇报",
+            "总结",
+            "论文",
+            "润色",
+            "翻译",
+            "改写",
+            "撰写",
+            "方案",
+        ],
         "dedup_threshold": 0.6,
     },
     "roleplay": {
@@ -74,7 +85,18 @@ PRESETS: dict[str, dict] = {
         "require_end_turn": True,
         "min_user_msg_chars": 10,
         "max_first_msg_chars": 20000,
-        "topic_keywords": ["角色", "人设", "剧情", "小说", "世界观", "扮演", "故事", "角色卡", "npc", "ooc"],
+        "topic_keywords": [
+            "角色",
+            "人设",
+            "剧情",
+            "小说",
+            "世界观",
+            "扮演",
+            "故事",
+            "角色卡",
+            "npc",
+            "ooc",
+        ],
         "dedup_threshold": 0.6,
     },
     "coding": {
@@ -151,7 +173,9 @@ def parse_claude_code(path: Path) -> SessionView | None:
                     content = msg.get("content")
                     if isinstance(content, list):
                         v.tool_uses += sum(
-                            1 for b in content if isinstance(b, dict) and b.get("type") == "tool_use"
+                            1
+                            for b in content
+                            if isinstance(b, dict) and b.get("type") == "tool_use"
                         )
                     sr = rec.get("stop_reason") or msg.get("stop_reason") or ""
                     if sr:
@@ -184,7 +208,9 @@ def parse_codex(path: Path) -> SessionView | None:
                 pt = pl.get("type")
                 if pt == "message" and pl.get("role") in ("user", "assistant"):
                     text = "".join(
-                        c.get("text", "") for c in (pl.get("content") or []) if isinstance(c, dict)
+                        c.get("text", "")
+                        for c in (pl.get("content") or [])
+                        if isinstance(c, dict)
                     )
                     if pl.get("role") == "user":
                         if text.strip():
@@ -255,9 +281,14 @@ def stage_length(row: dict, v: SessionView, p: dict) -> tuple[bool, str]:
     floor = p["min_user_msg_chars"]
     cap = p["max_first_msg_chars"]
     if cap and v.first_user_msg and len(v.first_user_msg) > cap:
-        return False, f"first user msg {len(v.first_user_msg)} > cap {cap} (scaffold noise)"
+        return (
+            False,
+            f"first user msg {len(v.first_user_msg)} > cap {cap} (scaffold noise)",
+        )
     if floor and v.user_chars:
-        real = [c for c in v.user_chars[1:] or v.user_chars]  # skip msg#1 (rules/preamble)
+        real = [
+            c for c in v.user_chars[1:] or v.user_chars
+        ]  # skip msg#1 (rules/preamble)
         if real and max(real) < floor:
             return False, f"longest later user msg {max(real)} < {floor}"
     return True, ""
@@ -277,7 +308,7 @@ def stage_topic(row: dict, v: SessionView, p: dict) -> tuple[bool, str]:
 
 def ngrams(s: str, n: int = 5) -> set[str]:
     s = re.sub(r"\s+", "", norm(s))
-    return {s[i : i + n] for i in range(0, max(1, len(s) - n + 1))}
+    return {s[i : i + n] for i in range(max(1, len(s) - n + 1))}
 
 
 def jaccard(a: set[str], b: set[str]) -> float:
@@ -286,7 +317,9 @@ def jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b)
 
 
-def stage_dedup(rows: list[dict], views: dict[str, SessionView], p: dict) -> tuple[list[dict], list[tuple[str, str]]]:
+def stage_dedup(
+    rows: list[dict], views: dict[str, SessionView], p: dict
+) -> tuple[list[dict], list[tuple[str, str]]]:
     """Collapse near-duplicate clusters (same template conversation). Keep the
     longest member of each cluster. Returns (alive_rows, (killed, reason) list).
     This is the one cross-row stage; it runs last so the candidate set is small."""
@@ -300,7 +333,9 @@ def stage_dedup(rows: list[dict], views: dict[str, SessionView], p: dict) -> tup
         sig = ngrams(v.first_user_msg[:2000]) if v else set()
         dup_of = next((kf for ks, kf in kept_sigs if jaccard(sig, ks) >= thr), None)
         if dup_of:
-            killed.append((f, f"near-duplicate of {Path(dup_of).name} (jaccard>={thr})"))
+            killed.append(
+                (f, f"near-duplicate of {Path(dup_of).name} (jaccard>={thr})")
+            )
             continue
         kept_sigs.append((sig, f))
         alive.append(row)
@@ -321,7 +356,7 @@ STAGES = [
 # ---------------------------------------------------------------------------
 
 
-def read_candidates(path: Path) -> list[dict]:
+def read_candidates(path: Path) -> tuple[list[str], list[dict]]:
     lines = path.read_text(encoding="utf-8").splitlines()
     if not lines:
         sys.exit("candidates file is empty")
@@ -335,9 +370,8 @@ def read_candidates(path: Path) -> list[dict]:
             continue
         parts = ln.split("\t")
         row = dict(zip(header, parts))
-        row["_header"] = header
         rows.append(row)
-    return rows
+    return header, rows
 
 
 def fmt_int(n: int) -> str:
@@ -374,12 +408,21 @@ def run_funnel(rows: list[dict], p: dict) -> tuple[list[dict], list[tuple[str, s
                 key = why.split("(")[0][:60]
                 reasons[key] = reasons.get(key, 0) + 1
         alive = nxt
-        top = "; ".join(f"{k} x{c}" for k, c in sorted(reasons.items(), key=lambda kv: -kv[1])[:2])
+        top = "; ".join(
+            f"{k} x{c}" for k, c in sorted(reasons.items(), key=lambda kv: -kv[1])[:2]
+        )
         table.append((name, len(alive), killed, top or "-"))
 
     # cross-row stage last
     alive, dup_killed = stage_dedup(alive, views, p)
-    table.append((f"L6 dedup", len(alive), len(dup_killed), "; ".join(f"{k} x1" for _, k in dup_killed[:2]) or "-"))
+    table.append(
+        (
+            "L6 dedup",
+            len(alive),
+            len(dup_killed),
+            "; ".join(f"{k} x1" for _, k in dup_killed[:2]) or "-",
+        )
+    )
 
     # print funnel table: the agent's decision surface
     print("=" * 78)
@@ -393,10 +436,14 @@ def run_funnel(rows: list[dict], p: dict) -> tuple[list[dict], list[tuple[str, s
             print(f"{name:<14} {fmt_int(inn):>8}   {reason}")
             continue
         pct = f"({killed / prev * 100:.0f}% of prev)" if prev else ""
-        print(f"{name:<14} {fmt_int(inn):>8}   killed {killed:<5} {pct:<10} {reason[:70]}")
+        print(
+            f"{name:<14} {fmt_int(inn):>8}   killed {killed:<5} {pct:<10} {reason[:70]}"
+        )
         prev = inn
     if skipped:
-        print(f"{'skipped':<14} {fmt_int(len(skipped)):>8}   unparseable/unknown format")
+        print(
+            f"{'skipped':<14} {fmt_int(len(skipped)):>8}   unparseable/unknown format"
+        )
     print()
 
     all_killed = [(f, r) for f, r in skipped]
@@ -404,10 +451,14 @@ def run_funnel(rows: list[dict], p: dict) -> tuple[list[dict], list[tuple[str, s
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    pe = sub.add_parser("enrich", help="add computed columns (turns/tools/stop/chars) to candidates.tsv")
+    pe = sub.add_parser(
+        "enrich", help="add computed columns (turns/tools/stop/chars) to candidates.tsv"
+    )
     pe.add_argument("candidates")
     pe.add_argument("out")
 
@@ -423,6 +474,14 @@ def main() -> int:
     pr.add_argument("--topic-keywords", help="comma-separated; overrides preset")
     pr.add_argument("--dedup-threshold", type=float)
     pr.add_argument("--no-dedup", action="store_true")
+    pr.add_argument(
+        "--in-place",
+        action="store_true",
+        help="write survivors back as CANDIDATES and rebuild the "
+        "screen.tsv scaffold next to it (the integration "
+        "contract with pick-sessions --review-only); CANDIDATES "
+        "is archived as candidates.full.tsv",
+    )
 
     sub.add_parser("presets", help="list preset parameter sets")
 
@@ -431,29 +490,46 @@ def main() -> int:
     if args.cmd == "presets":
         for name, cfg in PRESETS.items():
             print(f"{name}: {cfg['desc']}")
-            for k in ("min_turns", "max_tool_ratio", "require_end_turn", "topic_keywords", "dedup_threshold"):
+            for k in (
+                "min_turns",
+                "max_tool_ratio",
+                "require_end_turn",
+                "topic_keywords",
+                "dedup_threshold",
+            ):
                 print(f"  {k}: {cfg[k]}")
             print()
         return 0
 
-    rows = read_candidates(Path(args.candidates))
+    header, rows = read_candidates(Path(args.candidates))
 
     if args.cmd == "enrich":
-        extra = ["user_turns", "assistant_turns", "tool_uses", "last_stop", "first_msg_chars"]
+        extra = [
+            "user_turns",
+            "assistant_turns",
+            "tool_uses",
+            "last_stop",
+            "first_msg_chars",
+        ]
         out = []
         for row in rows:
             v = parse_session(Path(row["session_file"]), row.get("agent", ""))
             vals = (
-                (str(v.user_turns), str(v.assistant_turns), str(v.tool_uses), v.last_stop_reason,
-                 str(len(v.first_user_msg)))
-                if v else ("", "", "", "", "")
+                (
+                    str(v.user_turns),
+                    str(v.assistant_turns),
+                    str(v.tool_uses),
+                    v.last_stop_reason,
+                    str(len(v.first_user_msg)),
+                )
+                if v
+                else ("", "", "", "", "")
             )
             out.append({**row, **dict(zip(extra, vals))})
-        header = rows[0]["_header"] + extra
+        full_header = header + extra
         with open(args.out, "w", encoding="utf-8") as fh:
-            fh.write("\t".join(header) + "\n")
-            for r in out:
-                fh.write("\t".join(r[h] for h in header) + "\n")
+            fh.write("\t".join(full_header) + "\n")
+            fh.writelines("\t".join(r[h] for h in full_header) + "\n" for r in out)
         print(f"enriched {len(rows)} rows -> {args.out}")
         return 0
 
@@ -477,17 +553,58 @@ def main() -> int:
     if args.no_dedup:
         p["dedup_threshold"] = 0.0
 
-    alive, killed = run_funnel(rows, p)
+    alive, _killed = run_funnel(rows, p)
 
-    # output: surviving candidates, same shape as input (compatible with screen.tsv flow)
-    header = rows[0]["_header"]
+    if args.in_place:
+        # Integration contract with curate-sessions/pick-sessions: the picker's
+        # fzf input IS OUTDIR/candidates.tsv, so survivors must REPLACE it — a
+        # side-file filter silently does nothing to the interactive flow.
+        # E2E-provided failure modes baked in here:
+        #   1. the full candidate set is archived, never lost;
+        #   2. the screen.tsv scaffold is rebuilt FROM SURVIVORS with the
+        #      header row carrying suggested/reason (an awk that skips the
+        #      header row drops it, the join then fails with "screen.tsv has
+        #      no `suggested` column" and fzf renders 0/0);
+        #   3. writes are atomic (tmp + rename) so a crash never leaves a
+        #      half-replaced candidates.tsv.
+        cand = Path(args.candidates).resolve()
+        outdir = cand.parent
+        full = outdir / "candidates.full.tsv"
+        if not full.exists():
+            cand.rename(full)
+        else:
+            cand.unlink()  # re-tune rerun: archive already holds the full set
+        with open(cand, "w", encoding="utf-8") as fh:
+            fh.write("\t".join(header) + "\n")
+            fh.writelines("\t".join(r[h] for h in header) + "\n" for r in alive)
+        # Survivor rows verbatim + two empty suggestion columns — the shape
+        # scan's scaffold emits (`print $0, "", ""`). The join keys on
+        # session_file, so a row of all-empty cells would match nothing.
+        # An awk that also skips the header row drops suggested/reason and the
+        # join aborts with "screen.tsv has no `suggested` column" (fzf 0/0).
+        screen = outdir / "screen.tsv"
+        tmp = outdir / ".screen.tsv.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write("\t".join(header + ["suggested", "reason"]) + "\n")
+            fh.writelines("\t".join(r[h] for h in header) + "\t\t\n" for r in alive)
+        tmp.rename(screen)
+        print(f"surviving {len(alive)} / {len(rows)}")
+        print(f"candidates.tsv replaced in place (full set archived: {full.name})")
+        print(f"screen.tsv scaffold rebuilt for survivors: {screen}")
+        print(f"next: pick-sessions.sh -o {outdir} -y --review-only  (interactive)")
+        print("      or fill screen.tsv suggested/reason, then:")
+        print(
+            f"      curate-sessions.sh review --ui tsv -o {outdir} && curate-sessions.sh finalize -o {outdir}"
+        )
+        return 0
+
+    # default: write survivors to the requested output path, leave inputs alone
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write("\t".join(header) + "\n")
-        for r in alive:
-            fh.write("\t".join(r[h] for h in header) + "\n")
+        fh.writelines("\t".join(r[h] for h in header) + "\n" for r in alive)
     print(f"surviving {len(alive)} / {len(rows)} -> {args.out}")
-    print("next: curate-sessions.sh scan already produced screen.tsv scaffold;")
-    print("      run review --ui tsv on this OUT after folding survivors, or re-tune and re-run.")
+    print("tip: --in-place replaces OUTDIR/candidates.tsv + rebuilds screen.tsv,")
+    print("     which is what pick-sessions --review-only actually reads.")
     return 0
 
 
