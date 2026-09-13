@@ -81,7 +81,7 @@ Each stage has one completion criterion:
 | `scan` | `candidates.tsv` has one row per session that passed the metadata filters |
 | screen | every row carries a `suggested` (`keep`/`drop`) and a one-line `reason` |
 | `review` | `decisions.tsv` has a `decision` on every row |
-| `finalize` | `manifest.json` lists every kept session, and each `kept_as` compares equal to its `source` |
+| `finalize` | the user approved the keep/drop list (Hand-off gate), `manifest.json` lists every kept session, and each `kept_as` compares equal to its `source` |
 
 ## Screening (stage 2)
 
@@ -99,6 +99,38 @@ scratch: `review` and `finalize` read exactly `OUT/screen.tsv` /
 Then `review --ui tsv` converts it into `decisions.tsv` with
 `decision` defaulted to your `suggested`; the human edits only the rows they
 disagree with.
+
+### Hand-off gate (stop here — this is not your decision)
+
+The keep/drop decision belongs to the USER. Your screening is a
+recommendation, never the decision. The two paths divide finalize's meaning:
+
+- **Interactive** (`pick-sessions.sh` / `.ps1` entry / `open-review.sh`):
+  the user's ENTER inside fzf IS the approval — finalize runs automatically
+  right after and nothing more should be asked.
+- **Headless**: `finalize` is the agent-delegated interface, and it is only
+  legitimate AFTER the gate below has passed.
+
+After stage 2 you MUST stop and ask the user before anything touches
+`decision` or runs `finalize`:
+
+1. Present the screening summary: how many candidates, how many you marked
+   keep, and the drop reasons (grouped, one line each).
+2. Offer the interactive review — that is what it exists for:
+   - Windows: the `.ps1` entry point spawns a picker window, OR the
+     `package`d launcher (`open-review.sh`) the user runs in their own
+     terminal;
+   - WSL: same, via the Windows-side terminal;
+   - pure Linux: the `package`d launcher.
+3. If the user cannot or does not want the interactive picker, hand them
+   `decisions.tsv` for a quick read-through and let them say "go" — only
+   then run `finalize` as the user's delegate. `review --ui tsv` prints this
+   gate at its exit so it reaches every agent on the headless path.
+
+Do NOT fill the `decision` column yourself and finalize. Two real runs did
+exactly that: the user asked for an export and got one without ever seeing
+the keep/drop list. An export the user did not approve is not a completed
+task even when every copy verifies byte-identical.
 
 Judge from the prose, not from the metadata row. Column 6 (`first_prompt`) is a
 triage hint and can be blank: codex writes `<environment_context>`, AGENTS.md

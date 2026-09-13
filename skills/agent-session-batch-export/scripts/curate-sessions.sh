@@ -503,6 +503,15 @@ PEOF
     echo "wrote $DEC"
     echo "edit the decision column to keep|drop (reason is free text), then run:"
     echo "  $0 finalize -o $OUTDIR"
+    # The agent-delegated path's hand-off gate: an agent reading this output
+    # must present the keep/drop list to the USER before running finalize.
+    # finalize itself stays silent — on the interactive path the fzf ENTER
+    # was the approval, and a warning there would contradict it.
+    echo
+    echo "hand-off gate: the keep/drop decision belongs to the user. Show them"
+    echo "this list (or offer the interactive picker / open-review.sh) and get"
+    echo "their approval BEFORE running finalize. finalize without approval is"
+    echo "not a completed task."
     exit 0
   fi
 fi
@@ -629,6 +638,10 @@ if [[ "$cmd" == finalize ]]; then
   rm -f "$mtmp"
 
   echo "kept $kept sessions -> $KEEP"
+  # No approval warning here: on the interactive path (pick / open-review.sh)
+  # the fzf ENTER WAS the approval, and a "did the user approve?" note would
+  # contradict it. The gate lives in SKILL.md and in review --ui tsv's
+  # output — the agent-delegated path — where it is actionable.
   [[ $HARDLINK -eq 1 ]] && echo "(hardlinked)"
   echo "manifest: $OUTDIR/manifest.json"
   echo
