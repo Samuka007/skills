@@ -37,11 +37,24 @@ npx skills-ref validate ./skills/<skill-name>
 ## Development
 
 ```bash
-nix develop                                    # tmux + shellcheck
-bash test/accept.sh skills/<name> /tmp/work    # engine, non-interactive
-bash test/ux-grounding.sh .                    # real-PTY TUI behaviour
+nix develop                                       # tmux + shellcheck + ty + ruff
+echo "--- non-interactive ---"
+bash test/accept.sh skills/agent-session-batch-export /tmp/work
+echo "--- interactive (real PTY) ---"
+bash test/funnel-e2e.sh                           # funnel --in-place -> pick -> verified
+bash test/ux-grounding.sh .                       # entry-point UX
+bash test/test-fzf-tmux.sh                        # the picker itself
+bash test/test-pick-tmux.sh                       # whole one-command journey
+bash test/test-outdir-tmux.sh                     # output-directory prompt flow
+echo "--- static ---"
 shellcheck skills/<name>/scripts/*.sh
+ty check skills/trajectory-funnel/scripts/funnel.py
+ruff check skills/trajectory-funnel/scripts/funnel.py
 ```
+
+The interactive tests need a real PTY and skip themselves without one; they are
+the only tests that can see the picker's actual output. See
+[`AGENTS.md`](AGENTS.md) for how work here is accepted.
 
 | Skill | Dev notes |
 |---|---|
