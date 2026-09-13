@@ -287,9 +287,19 @@ case "$agent" in
                    else (if type=="string" then . else "" end) end' "$f" 2>/dev/null ;;
   codex)  jq -r 'select(.type=="response_item" and .payload.type=="message"
                    and (.payload.role=="user" or .payload.role=="assistant"))
-                 | .payload.role as $r
-                 | (.payload.content | map(.text//empty) | join("\n"))
-                 | "\n\u001b[36m[" + $r + "]\u001b[0m\n" + .' "$f" 2>/dev/null ;;
+                 | [.payload.role, (.payload.content | map(.text//empty) | join("\n"))]
+                 | @tsv' "$f" 2>/dev/null | while IFS=$'\t' read -r role body; do
+            # Drop the injected blocks BEFORE printing the [role] header, so a
+            # user turn that is nothing but <environment_context> does not leave
+            # a dangling empty label.
+            body="$(printf '%s' "$body" | awk '{ sub(/^[ \t\r]+/,"") }
+              $0 ~ /^</ { next } $0 ~ /<environment_context>/ { next }
+              $0 ~ /<user_instructions>/ { next } $0 ~ /<permissions/ { next }
+              $0 ~ /^# AGENTS\.md/ { next } $0 ~ /^- [a-z].*: .*\(file:/ { next }
+              length($0) > 2 { print }')"
+            [[ -z "$body" ]] && continue
+            printf '\n\033[36m[%s]\033[0m\n%s\n' "$role" "$body"
+          done ;;
 esac | awk '{ sub(/^[ \t\r]+/,"") }
             $0 ~ /^</ { next } $0 ~ /<environment_context>/ { next }
             $0 ~ /<user_instructions>/ { next } $0 ~ /<permissions/ { next }
