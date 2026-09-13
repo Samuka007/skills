@@ -18,8 +18,9 @@ at from here.
 | 2 | yolo mode (no-review export on explicit opt-out) | **done** | commit `33361ee`; `test/yolo-e2e.sh` green (32 checks, discriminating power proved by mutation); `accept.sh` + `shellcheck` + `funnel-e2e.sh` clean; PM re-ran the real entry point (`pick-sessions.sh -o DIR -y --review-only --yolo` → rule printed, 2 of 3 kept, manifest entries carry `mode=yolo`/`reviewed=false`/`approved_by=user-opt-out`, `verified 2/2`, gated path adds no such keys); closed |
 | 3 | READMEs for both skills | **done** | commit `f027a36`; accepted (read end-to-end against SKILL.md and funnel.py, links resolve, synthetic-data smoke reproduces the documented 5→1 funnel table); closed |
 | 4 | recorded select+export demo in README | **done** | cast/script/transcript in `a297d7f`, embedded by `608ed88`; accepted by re-running `docs/agent-session-batch-export/demo.sh` (rc=0, decisions.tsv shows human override both directions, 2/2 copies byte-identical); closed |
-| 5 | SKILL.md: funnel mention + yolo escape clause | **half done** | escape clause landed with #2 (`33361ee`); the funnel subsection is still missing — `grep -n -i funnel SKILL.md` finds nothing |
-| 6 | INTERNALS.md: record this round's traps | **registered** | funnel contract, yolo provenance, dev-tooling policy |
+| 5 | SKILL.md: funnel mention + yolo escape clause | **done** | escape clause in `33361ee`, funnel subsection in `37c75dd`, wording corrected in `5c65d25` (the funnel leaves `suggested` empty; screening is still the agent's); `skills-ref validate` passes, 327 lines; closed |
+| 6 | INTERNALS.md: record this round's traps | **done** | commit `38d54f0` (+96 lines: funnel contract section, yolo provenance and both silent defects, dev-tooling policy); `skills/**` byte-identical; closed |
+| 7 | funnel `--in-place`: atomic candidates.tsv rewrite | **done** | commit `9f6e2f9` (no issue — found while auditing the code against its own comment); the archive held the original so the failure was recoverable, but the comment claimed atomicity the code did not have; `funnel-e2e.sh` + `yolo-e2e.sh` + ty/ruff re-run clean |
 
 ## Decisions and constraints (apply to all future items)
 
