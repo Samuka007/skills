@@ -276,6 +276,16 @@ already handled in the script; this section is why the handling exists.
     was reintroduced there: a row with an empty `first_prompt` lost that field
     to IFS-whitespace collapsing, every later column shifted left, and 2 of 15
     selected sessions silently never reached the manifest.
+19. **fzf has no "focus the preview pane" concept.** The preview is read-only
+    and cannot be tabbed into, so `TAB` cannot switch panes — `TAB` is only
+    `toggle`. Preview scrolling is key-driven: `shift-↑/↓` is built in, and
+    `PgUp/PgDn`, `alt-↑/↓`, `ctrl-o` are bound by the picker.
+20. **A binding on a PRINTABLE key steals that keystroke from the query.**
+    Binding `g:preview-top` made `g` untypeable in the search box (verified:
+    the query stayed empty while the match count did not change). Preview keys
+    must therefore be non-printable. `space` is safe because fzf gives bound
+    keys priority only while search is *disabled*; once `/` enables search,
+    space is an ordinary character again.
 
 ## Adding a harness
 

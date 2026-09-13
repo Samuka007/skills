@@ -251,16 +251,36 @@ else
 fi
 
 echo
-echo "== pick: TAB toggle · ENTER confirm · ESC abort · ctrl-a all / ctrl-d none =="
+echo "== pick ================================================================"
 if [[ "$n_keep_sug" -gt 0 ]]; then
   echo "   $n_keep_sug rows are PRE-SELECTED at the top — the screening's picks."
-  echo "   Press TAB on any of them to drop it, or TAB a lower row to add it."
+  echo "   Press SPACE on any of them to drop it, or SPACE a lower row to add it."
   echo "   ($n_drop_sug rejected rows follow below, unselected.)"
 else
   echo "   no screening ran; nothing is pre-selected. All $total are listed."
 fi
+cat <<'KEYS'
+   SPACE  mark / unmark the highlighted row
+   ENTER  confirm  (marked rows are kept)        ESC   abort
+   ctrl-a all   ctrl-d none
+   /      start searching  (the list does NOT filter until you press /)
+   shift-↑ / shift-↓   scroll the preview     PgUp/PgDn  preview by page
+   alt-↑ / alt-↓  preview top / bottom   ctrl-o  hide/show the preview
+   (the preview cannot take focus — fzf has no such concept — so it is
+    scrolled by keys, not by tabbing into it)
+========================================================================
+KEYS
 echo
 
+# --disabled + `/` to enable search: by default every keystroke would filter the
+# list, which fights with using letters as list-navigation muscle memory and
+# hides rows the moment you mistype. Search becomes an explicit mode instead.
+# Verified: with --disabled the list stays 15/15 while typing; `/` then "ccc"
+# narrows it to the matching subset.
+#
+# SPACE toggles: TAB is the fzf default but space is what a checklist UI trains
+# people to press. TAB is left bound too, since some people reach for it.
+#
 # No --with-nth: it transforms the fields AND the fields fzf writes back on
 # selection, which silently mangled the session paths (only rows whose shifted
 # column happened to be a valid path survived). Showing the whole row with
@@ -270,17 +290,28 @@ echo
 # --layout=reverse so item 1 renders at the TOP: with fzf's default layout the
 # first row is drawn at the bottom, which made the sorted keeps look like they
 # had not sorted at all.
+#
+# The preview is NOT a focusable pane — fzf has no notion of focusing it, so
+# TAB cannot switch panes. Scrolling it is key-driven; shift-↑/↓ is fzf's
+# built-in binding, the rest are added here.
 set -o pipefail
 chosen="$(fzf --multi --ansi --delimiter='\t' \
     --layout=reverse \
+    --disabled \
     --nth=5,2 \
     --no-sort \
     --preview "$PREVIEW {}" \
     --preview-window=right:60%:wrap \
-    --header="TAB toggle · ENTER confirm · ESC abort · ctrl-a all
-[$total candidates; $n_keep_sug pre-selected by the screening]  columns: agent · cwd · size · events · first-prompt · file · suggested · reason" \
+    --header="SPACE mark · ENTER confirm · ESC abort · / search · shift-↑/↓ preview
+[$total candidates; $n_keep_sug pre-selected]  columns: agent · cwd · size · events · first-prompt · file · suggested · reason" \
     --bind "load:$sel_seq" \
+    --bind '/:enable-search+unbind(/)' \
+    --bind 'space:toggle' \
+    --bind 'tab:toggle+down' \
     --bind 'ctrl-a:select-all' --bind 'ctrl-d:deselect-all' \
+    --bind 'ctrl-o:toggle-preview' \
+    --bind 'pgdn:preview-page-down' --bind 'pgup:preview-page-up' \
+    --bind 'alt-up:preview-top' --bind 'alt-down:preview-bottom' \
     < "$OUTDIR_ABS/.rows2.tsv")" || {
   echo "aborted — nothing written" >&2; exit 1; }
 

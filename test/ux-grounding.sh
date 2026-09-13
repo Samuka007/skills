@@ -118,6 +118,56 @@ else
   no "ENTER returned $sel rows, expected 3"
 fi
 
+echo "--- A4b. SPACE unmarks a pre-selected row ---"
+# restart: A4's ENTER ended the picker
+tmux kill-session -t "$SESS" 2>/dev/null || true
+rm -f "$WORK/decisions.tsv" "$WORK/.chosen.tsv"
+run_picker
+before="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
+tmux send-keys -t "$SESS" Space; sleep 1
+after="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
+echo "  selected before=$before after SPACE=$after"
+if [[ "$before" == "(3)" && "$after" == "(2)" ]]; then
+  ok "SPACE unmarked one row (3 -> 2)"
+else
+  no "SPACE did not unmark: $before -> $after"
+fi
+tmux send-keys -t "$SESS" Escape; sleep 1
+tmux kill-session -t "$SESS" 2>/dev/null || true
+
+echo
+echo "--- A4c. typing does NOT filter until / is pressed ---"
+# Do NOT assert on a literal search term: the candidate set differs per run and
+# the screening's cwds change, so "wanwei matches 4" is a false invariant. What
+# IS invariant: with search disabled typing changes nothing, and after / the
+# query line accepts input and the match count can change.
+rm -f "$WORK/.chosen.tsv"
+run_picker
+before="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
+tmux send-keys -t "$SESS" "zzq"; sleep 1
+after="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
+echo "  typing 'zzq' with search disabled: before=$before after=$after"
+if [[ "$before" == "$after" ]]; then
+  ok "typing did not filter while search is disabled (still $after)"
+else
+  no "typing filtered the list without /: $before -> $after"
+fi
+
+tmux send-keys -t "$SESS" C-u; sleep 0.3
+tmux send-keys -t "$SESS" "/"; sleep 0.6
+tmux send-keys -t "$SESS" "codex"; sleep 1.2
+qs="$(dump | grep -E '^> ' | sed -n 1p)"
+filt="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
+echo "  after / then 'codex': query=[${qs:0:20}] match=$filt"
+# the query line must have captured the text (proves / entered search mode)
+if [[ "$qs" == *codex* ]]; then
+  ok "/ entered search and the query captured the text"
+else
+  no "/ did not capture input; query line was: ${qs:0:40}"
+fi
+tmux send-keys -t "$SESS" Escape; sleep 1
+tmux kill-session -t "$SESS" 2>/dev/null || true
+
 echo "--- A5. ctrl-a then ENTER takes exactly the agent-kept rows ---"
 # A4's ENTER already ended the picker; start a fresh session for the next pick.
 tmux kill-session -t "$SESS" 2>/dev/null || true
