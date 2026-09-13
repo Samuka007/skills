@@ -235,7 +235,12 @@ spawn_terminal() {
   # fzf here is a Linux binary that needs a Linux tty.
   if [[ -n "${WSL_DISTRO_NAME:-}" ]] && command -v wt.exe >/dev/null 2>&1; then
     echo "opening Windows Terminal…"
-    wt.exe -- wsl.exe -d "$WSL_DISTRO_NAME" --cd "$OUTDIR_ABS" -- \
+    # No --cd OUTDIR: wsl.exe refuses to start the shell when the directory
+    # is gone (deleted between spawn request and child start — the child runs
+    # later, on its own schedule). Every path inside is absolute, so cwd is
+    # irrelevant; defaulting to HOME keeps the child alive instead of dying
+    # at chdir.
+    wt.exe -- wsl.exe -d "$WSL_DISTRO_NAME" -- \
       bash -lc "bash $cmd" >/dev/null 2>&1 && return 0
   fi
   if [[ -n "${WSL_INTEROP:-}" ]] && command -v cmd.exe >/dev/null 2>&1; then
