@@ -21,8 +21,32 @@ at from here.
 | 5 | SKILL.md: funnel mention + yolo escape clause | **done** | escape clause in `33361ee`, funnel subsection in `37c75dd`, wording corrected in `5c65d25` (the funnel leaves `suggested` empty; screening is still the agent's); `skills-ref validate` passes, 327 lines; closed |
 | 6 | INTERNALS.md: record this round's traps | **done** | commit `38d54f0` (+96 lines: funnel contract section, yolo provenance and both silent defects, dev-tooling policy); `skills/**` byte-identical; closed |
 | 7 | funnel `--in-place`: atomic candidates.tsv rewrite | **done** | commit `9f6e2f9` (no issue — found while auditing the code against its own comment); the archive held the original so the failure was recoverable, but the comment claimed atomicity the code did not have; `funnel-e2e.sh` + `yolo-e2e.sh` + ty/ruff re-run clean |
+| 8 | Windows interactive picker through zellij | **in progress** | issue [#7](https://github.com/Samuka007/skills/issues/7); the standard it serves is in Decisions below |
 
 ## Decisions and constraints (apply to all future items)
+
+- **The interactive path is verified by driving a real TUI, on the platform it
+  ships to.** Not optional, and not substitutable:
+  - **Windows** — drive the real picker through **zellij** (`--test-spawn
+    zellij`; `write-chars` / `send-keys` to act, `dump-screen` to read back).
+    tmux does not exist under MSYS, so there is no alternative there.
+  - **WSL / Linux** — drive it through **tmux or zellij** (the existing
+    `test/*-tmux.sh` and `test/funnel-e2e.sh` are the shape to follow).
+
+  Rationale: every failure this pipeline has produced was invisible to
+  non-interactive checks and only appeared under a real terminal — the side-file
+  funnel filter that filtered nothing, the scaffold header whose absence made
+  the join abort and fzf render 0/0, the header text written into data rows, and
+  a `--yolo` branch that printed "command not found" and exited 0 having written
+  nothing. A non-interactive run of the same code proves nothing about what the
+  user sees, because what the user sees is the part being asserted.
+
+  The standard behind the rule: shipping on "the tests passed" while the first
+  real use hits a defect is a broken promise. The customer does not care which
+  layer was green; they care that it worked when they ran it. So the acceptance
+  run for anything touching the picker is a real terminal, on the real platform,
+  with the pane read back and asserted on — and a run that could not do that is
+  reported as unverified, never as passed.
 
 - **Distributed artifact is standard-library Python only.** Dev-time static
   analysis (`ty`, `ruff`) lives in `flake.nix`'s devShell and never reaches a
@@ -47,6 +71,13 @@ at from here.
   (`ctrl-a` selects all rows in the picker, then ENTER).
 
 ## Real-machine acceptance (Windows Git Bash)
+
+**Scope of what is verified here: the non-interactive path only.** This run
+exercised `--yolo`, which by design never opens the picker. It therefore says
+nothing about the interactive picker on Windows — the fzf pane, its key
+bindings, its pre-selection display, or the terminal spawn. Under the standard
+above, the picker on Windows is **unverified** until it is driven through
+zellij. That run is item 8 (issue #7).
 
 Run against the copy installed by `npx skills add` into
 `C:\Users\Samuka007\.agents\skills\agent-session-batch-export`, driven by the
