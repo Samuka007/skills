@@ -270,7 +270,15 @@ cat > "$PREVIEW" <<'PEOF'
 #   1 agent · 2 cwd · 3 size · 4 n_lines · 5 first_prompt
 #   6 session_file · 7 suggested · 8 reason
 line="$1"
-IFS=$'\t' read -r agent cwd size n_lines fp f sug why <<<"$line"
+# Split on \x1f, NOT tab. `read` treats tab as collapsible IFS *whitespace*, so
+# a row whose 5th field (first_prompt) is EMPTY loses that field and every later
+# column shifts left — $f then held the empty reason instead of the session path
+# and jq read a nonexistent file, which is why the preview pane went blank for
+# every session with no first prompt. Same trap already documented for
+# decisions.tsv; this reader had reintroduced it.
+sep="$(printf '\037')"
+line="${line//$'\t'/$sep}"
+IFS="$sep" read -r agent cwd size n_lines fp f sug why <<<"$line"
 printf '\033[1m%s\033[0m  \033[2m%s\033[0m\n' "$agent" "$f"
 printf 'size: %s bytes   events: %s\n' "$size" "$n_lines"
 [[ -n "$sug" ]] && printf 'agent suggests: \033[33m%s\033[0m — %s\n' "$sug" "$why"
