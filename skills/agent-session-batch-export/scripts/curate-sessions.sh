@@ -131,15 +131,21 @@ fi
 # fields: <bytes> <mtime-epoch>, for a path that exists
 stat_pair() { # $1=file
   local out
-  out="$(stat $STAT_OPT "$STAT_FMT" "$1" 2>/dev/null)" || { printf '0 0'; return; }
+  # Both variables are quoted: $STAT_OPT (-c/-f) and $STAT_FMT are each a single
+  # argument. Quoting $STAT_FMT matters because it contains a space.
+  out="$(stat "$STAT_OPT" "$STAT_FMT" "$1" 2>/dev/null)" || { printf '0 0'; return; }
   case "$out" in
     *$'\n'*) out="$(printf '%s' "$out" | awk 'NR==1{print; exit}')" ;;
   esac
+  # Deliberate word split: $out is "<bytes> <mtime>" and must become two params.
+  # shellcheck disable=SC2086
   set -- $out
   printf '%s %s' "${1:-0}" "${2:-0}"
 }
 
 stat_size() { # $1=file
+  # Deliberate word split: stat_pair prints "<bytes> <mtime>".
+  # shellcheck disable=SC2046
   set -- $(stat_pair "$1")
   printf '%s' "$1"
 }
@@ -420,10 +426,14 @@ if [[ "$cmd" == finalize ]]; then
   # create up front: a zero-match selection must still yield an empty manifest.
   mtmp="$(mktemp)"; : > "$mtmp"
 
+  # size_bytes/first_prompt are fixed TSV columns read to keep positions
+  # aligned; they are never used directly (re-emitted verbatim by finalize).
+  # The directive must sit on the line immediately before the command.
+  # shellcheck disable=SC2034
   while IFS="$sep" read -r decision reason suggested agent cwd mtime size_bytes n_lines first_prompt f; do
     # \x1f is not IFS whitespace, so a trailing CR survives into the LAST field
-    # on Windows, where the TSV may carry CRLF. Strip it from every field that
-    # is later used verbatim (the path above all) rather than only from $f.
+    # on Windows, where the TSV may carry CRLF. Strip it from every field used
+    # verbatim (the path above all) rather than only from $f.
     f="${f%$'\r'}"; cwd="${cwd%$'\r'}"; agent="${agent%$'\r'}"
     [[ -z "$f" ]] && continue
     [[ -f "$f" ]] || { echo "  ! missing: $f" >&2; continue; }
@@ -452,6 +462,7 @@ if [[ "$cmd" == finalize ]]; then
     fi
     # jqd, not jq: every value below is transcript DATA. Under MSYS the plain
     # `jq` would have Git Bash rewrite `cwd`/`source` into Windows paths.
+    # shellcheck disable=SC2016
     printf '%s\n' "$(jqd -n -c \
       --arg agent "$agent" --arg cwd "$cwd" --arg src "$f" --arg dest "$dest" \
       --arg decision "$decision" --arg reason "$reason" --arg suggested "$suggested" \
@@ -483,7 +494,11 @@ if [[ "$cmd" == finalize ]]; then
   # file") — indistinguishable from a corrupt copy. A process substitution
   # (`done < <(jq …)`) would additionally block forever if backgrounded.
   echo "verify every copy is byte-identical:"
-  echo "  jq -r '.[] | \"\\(.source)\\t\\(.kept_as)\"' $OUTDIR/manifest.json > /tmp/pairs.tsv"
-  echo "  while IFS=\$'\\t' read -r s d; do d=\"\${d%\$'\\r'}\"; cmp -s \"\$s\" \"\$d\" || echo \"MISMATCH \$s\"; done < /tmp/pairs.tsv"
+  # printf, not echo: this text contains backslash escapes, which echo would
+  # interpret differently across shells.
+  printf '  jq -r %s %s > /tmp/pairs.tsv\n' \
+    "'.[] | \"\\(.source)\\t\\(.kept_as)\"'" "$OUTDIR/manifest.json"
+  # shellcheck disable=SC2016  # ${d%...} is literal text for the reader to paste
+  printf '  while IFS=$\x27\\t\x27 read -r s d; do d="${d%%$\x27\\r\x27}"; cmp -s "$s" "$d" || echo "MISMATCH $s"; done < /tmp/pairs.tsv\n'
   exit 0
 fi

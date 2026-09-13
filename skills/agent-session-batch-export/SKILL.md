@@ -65,6 +65,21 @@ no human-authored opening turn — that is itself signal for `drop`.
 
 ## Verifying the corpus
 
+### What has actually been verified
+
+Not "the checks passed" — what each check covers, so the gaps are visible:
+
+| Area | Coverage |
+|---|---|
+| scan / workspace / topic / since / min-lines | 10-assertion suite, Linux + Windows |
+| review `--ui tsv` | 10-assertion suite, Linux + Windows |
+| **review `--ui fzf`** (the default) | real PTY under tmux, Linux: TUI renders, preview shows real prose, TAB selects, ctrl-a/d work, ESC aborts without writing. Windows: fzf present but no PTY driver, so only the data path (list consumable by `fzf`, preview command emits prose) is covered — not the keypress interaction. |
+| finalize byte-identity | `cmp` + recorded sha256, both platforms |
+| cross-platform identity | same file, sha256 computed under WSL and Git Bash, equal |
+
+Known blind spots: the fzf keypress path is unverified on Windows; macOS has
+never been run (only the BSD `stat`/`shasum` branches were exercised via a stub).
+
 `finalize` records `source`, `kept_as` and `sha256` per session. Confirm every
 copy is byte-identical before handing the corpus on:
 
