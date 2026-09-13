@@ -334,16 +334,37 @@ PEOF
 chmod +x "$PREVIEW"
 
 # Build the fzf row set: candidates columns + suggested + reason.
+#
+# screen.tsv is "candidates.tsv plus two columns", but the header shape varies in
+# practice: a maintainer's test writes `decision reason suggested …` (10 cols) and
+# a hand-written screening `session_file suggested reason` (3 cols). Reading by
+# POSITION therefore reads the wrong field for at least one of them — that is
+# what swapped suggested/reason, zeroed the pre-selection count, and made the
+# preview print the reason as the suggestion.
+#
+# So: resolve the two columns by HEADER NAME, and join on `session_file` rather
+# than by line order — `paste` would attach a suggestion to whichever candidate
+# happened to sit at the same line, silently mislabelling the whole set if the
+# screening were sorted differently.
 if [[ -f "$SCREEN" ]]; then
-  # Both sides must exclude their header or paste() misaligns by one row.
-  # screen.tsv is `session_file <TAB> suggested <TAB> reason`, and the row layout
-  # every downstream reader assumes is `… 7 suggested · 8 reason`. Emitting
-  # `$3"\t"$2` here (reason first) contradicted that: the pre-selection count
-  # matched on $7 and always found 0, the preview labelled the reason as the
-  # suggestion, and decisions.tsv carried the two columns swapped. Only the
-  # sort key ($8) happened to agree. Emit suggested then reason.
-  paste <(awk -F'\t' 'NR>1' "$CAND") \
-        <(awk -F'\t' 'NR>1{print $2"\t"$3}' "$SCREEN") > "$OUTDIR_ABS/.rows.tsv"
+  awk -F'\t' 'BEGIN{OFS="\t"}
+    NR==FNR {
+      if (FNR==1) { for (i=1;i<=NF;i++) { if ($i=="suggested") si=i; if ($i=="reason") ri=i }
+                    if (!si) { print "screen.tsv has no `suggested` column" > "/dev/stderr"; exit 2 }
+                    next }
+      # key on the session_file value, whatever column it sits in
+      for (j=1;j<=NF;j++) if ($j ~ /\.jsonl$/) k=$j
+      sug[k]=si?$(si):""; why[k]=ri?$(ri):""
+      next
+    }
+    FNR==1 { next }
+    # Rebuild the fields explicitly rather than printing $0 with two appends:
+    # $0 is the raw line and appending to it re-joins with OFS, which does not
+    # reproduce a row whose fields were split on tabs.
+    { f=$(NF)
+      for (i=1;i<=NF;i++) printf "%s\t", $i
+      printf "%s\t%s\n", (f in sug ? sug[f] : ""), (f in why ? why[f] : "") }
+  ' "$SCREEN" "$CAND" > "$OUTDIR_ABS/.rows.tsv"
 else
   awk -F'\t' 'BEGIN{OFS="\t"} NR>1{print $0,"",""}' "$CAND" > "$OUTDIR_ABS/.rows.tsv"
 fi
@@ -397,7 +418,10 @@ echo
 echo "== pick ================================================================"
 if [[ "$n_keep_sug" -gt 0 ]]; then
   echo "   $n_keep_sug rows are PRE-SELECTED at the top — the screening's picks."
-  echo "   Press SPACE on any of them to drop it, or SPACE a lower row to add it."
+  # TAB, not SPACE: SPACE is deliberately left unbound so it can be typed into
+  # the query (see the key-binding notes below). Advertising SPACE here sent
+  # users to a key that does nothing.
+  echo "   TAB any of them to drop it, or TAB a lower row to add it."
   echo "   ($n_drop_sug rejected rows follow below, unselected.)"
 else
   echo "   no screening ran; nothing is pre-selected. All $total are listed."
