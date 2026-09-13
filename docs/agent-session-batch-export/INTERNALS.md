@@ -65,7 +65,11 @@ These apply to the engine (`scripts/curate-sessions.sh`).
 10. **Both discovery branches must feed one redirect.** With `> file` hanging
     off only the second `if`, the claude half leaked to stdout and the
     candidate file silently held codex alone.
-11. **`--latest`** collapses a workspace's stale rollout files to the newest.
+11. **A documented option that was never implemented is a shipped bug.**
+    `--latest` appeared in SKILL.md and in this file as if it existed; it was
+    never in the code, and a user following the doc got `unknown option` —
+    it did not even exist in git history, so it was never lost, it was never
+    true. Docs may only describe what a test exercises.
 
 ## Traps specific to the picker (`scripts/pick-sessions.sh`)
 
@@ -73,11 +77,14 @@ These apply to the engine (`scripts/curate-sessions.sh`).
     the original fields. Verified by experiment: `--with-nth=3,1` with
     `--preview {1}` yielded the old third column. The picker passes the whole
     row (`{}`) and parses it itself, so the two can never disagree.
-13. **`--with-nth` also transforms the row fzf writes back on selection.** The
-    session path was silently mangled and only rows whose shifted column
-    happened to be a valid path survived. The picker therefore uses no
-    `--with-nth` at all: display order equals file order and the returned row is
-    byte-identical to the input row.
+13. **`--with-nth` and the write-back row: verify per fzf version.** fzf
+    0.74.3 returns the FULL original row on selection (verified via
+    `--filter` and a real pty), which is why curate's `review` may keep
+    `--with-nth=1,2,5,6` and read `$7`. An earlier note here claimed the
+    write-back was also transformed — re-testing could not reproduce that on
+    this version. The picker still avoids `--with-nth` (display order equals
+    file order, returned row byte-identical by construction); do not "fix"
+    curate's review off the old claim without re-measuring your fzf.
 14. **`start:` fires before the input is loaded, so `start:select-all` selects
     nothing** — it looks like it worked and silently leaves `(0)` selected.
     `load:` fires after loading and does work (`--sync` also rescues `start:`).
@@ -174,6 +181,44 @@ These apply to the engine (`scripts/curate-sessions.sh`).
 34. **The picker splits the row on `\x1f` for the same reason as trap 4**, and
     also strips a trailing CR from every field before comparing paths — a CR
     makes `cmp` report a mismatch on a byte-identical copy.
+35. **`set -u` plus a variable defined in one command block is a latent
+    crash in every other block.** `TMP` was created inside `scan` only, so
+    `review` (the default-UI command, and `--resume`) died with
+    "TMP: unbound variable" before doing anything. Shared state belongs at
+    the top; per-command state belongs to that command's block.
+36. **A screening file is EXTERNAL INPUT, so it gets the same defenses as jq
+    output.** A screen.tsv saved CRLF rode its CR onto `session_file`, the
+    join regex never matched, and the entire screening arrived as empty
+    suggestions; a tab inside `reason` shifted every later column and a kept
+    session silently vanished at finalize. CR-strip and field-sanitize on
+    ingest, on both sides of the join and in the finalize reader.
+37. **The no-terminal fallback must reference a file that exists at that
+    point.** The picker's headless fallback told the user to edit
+    `decisions.tsv` — only written AFTER a successful pick — so following the
+    printed instructions verbatim produced a garbage hand-edit and a finalize
+    header failure. Print the staged sequence (review --ui tsv → edit →
+    finalize) instead, and exit non-zero.
+38. **A headless caller cannot attach to tmux.** `exec tmux attach` died with
+    "open terminal failed: not a terminal" — after creating the session, so
+    the run LOOKED alive while the process was gone and the staged fallback
+    was unreachable. Create the session, print the attach command, return.
+39. **Spawn "success" is delegation, not a window.** `wt.exe` exits 0 the
+    moment the spawn is delegated; on a disconnected desktop no visible
+    window ever appears. Report spawns as "requested", never "opened", and
+    always print the staged escape hatch alongside.
+40. **`bash < script` (stdin invocation) cannot read `$0` for a self-check.**
+    The CRLF guard skips itself when `$0` is not a readable file — fail open
+    there, or the guard adds a second confusing error to the first. Direct
+    `./script` execution of a CRLF file dies in the KERNEL
+    (`env: 'bash\r': No such file`), before bash parses anything: no in-file
+    guard can catch that one, which is why SKILL.md says to invoke via
+    `bash <script>`.
+41. **CRLF guard lines must end in a comment.** A guard line ending in a
+    quoted word grows a trailing CR under a CRLF smudge (the CR becomes part
+    of the word); ending every guard line in `# CRLF-GUARD` swallows the CR
+    into the comment instead. Verified by experiment: the guard survives its
+    own CRLF file and exits 3 before any compound-command syntax error (bash
+    parses incrementally).
 
 ## Verification coverage
 
@@ -183,7 +228,7 @@ Not "the checks passed" — what each check covers, so the gaps are visible:
 |---|---|
 | scan / workspace / topic / since / min-lines | 10-assertion suite, Linux + Windows |
 | review `--ui tsv` | 10-assertion suite, Linux + Windows |
-| **review `--ui fzf`** (the default) | real PTY under tmux, Linux: TUI renders, preview shows real prose, TAB selects, ctrl-a/d work, ESC aborts without writing. Windows: covered through a real zellij session (`dump-screen` reads the rendered pane back), so the keypress path and the preview render are both observed — not merely the data path. |
+| **review `--ui fzf`** (the default) | real PTY under tmux, Linux: TUI renders, preview shows real prose, TAB selects, ctrl-a/d work, ESC aborts without writing. Windows: covered through a real zellij session (`dump-screen` reads the rendered pane back), so the keypress path and the preview render are both observed — not merely the data path. (2026-09-13: this command had been DEAD on every platform — TMP unbound, trap 35 — so earlier "verified" entries were exercised against a hand-shaped file, not this command's happy path. Fixed and re-verified.) |
 | finalize byte-identity | `cmp` + recorded sha256, both platforms |
 | cross-platform identity | same file, sha256 computed under WSL and Git Bash, equal |
 | auto-spawn a terminal | Windows Git Bash: verified end-to-end. WSL: verified. |

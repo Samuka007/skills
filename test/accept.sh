@@ -21,6 +21,14 @@ out="$(bash "$C" scan -o "$WORK" 2>&1)"; echo "$out" | sed -n 1p
 total="${out##*candidates: }"; total="${total%% *}"
 pos "candidates" "${total:-0}"
 
+step "review --ui fzf (TMP regression: was unbound under set -u)"
+rf="$(bash "$C" review --ui fzf -o "$WORK" 2>&1)"; rc=$?
+if [[ "$rf" != *"unbound variable"* && "$rf" == *"fzf:"* ]]; then
+  echo "  OK   review fzf reaches fzf (headless abort is expected here)"
+else
+  echo "  FAIL review fzf rc=$rc: ${rf##*$'\n'}"; fail=1
+fi
+
 step "filters"
 ml="$(bash "$C" scan -o "$WORK/ml" --min-lines 20 2>&1 | sed -n 's/^candidates: \([0-9]*\).*/\1/p')"
 pos "min-lines" "${ml:-0}"
@@ -42,6 +50,13 @@ awk -F'\t' 'BEGIN{OFS="\t"} NR>1 { if (++c<=3) {$1="keep"; $2="acceptance"} else
 step "finalize"
 bash "$C" finalize -o "$WORK" 2>&1 | sed -n 1p
 chk "manifest entries" "$(jq 'length' "$WORK/manifest.json")" "3"
+
+step "malformed row (tab inside reason) is rejected loudly, not silently dropped"
+bash "$C" review --ui tsv -o "$WORK" >/dev/null 2>&1
+awk -F'\t' 'BEGIN{OFS="\t"} NR>1 { if (++c<=1) {$1="keep"; $2="has\ttab inside"} } {print}' \
+  "$WORK/decisions.tsv" > "$WORK/d3" && mv "$WORK/d3" "$WORK/decisions.tsv"
+fin="$(bash "$C" finalize -o "$WORK" 2>&1)"; finrc=$?
+if [[ $finrc -eq 0 && "$fin" == *"columns (want 10)"* ]]; then echo "  OK   bad row named, exit 0, rest kept"; else echo "  FAIL finalize rc=$finrc out=${fin##*$'\n'}"; fail=1; fi
 
 step "byte identity"
 jq -r '.[] | "\(.source)\t\(.kept_as)"' "$WORK/manifest.json" > "$WORK/pairs.tsv"

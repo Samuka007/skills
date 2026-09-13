@@ -1,0 +1,9 @@
+# Normalize line endings: this repo ships shell scripts that are executed by
+# bash on Windows (Git Bash). A git-clone-based installer on a machine with
+# core.autocrlf=true would otherwise smudge LF to CRLF on checkout, and every
+# script dies with "$'\r': command not found". eol=lf overrides autocrlf for
+# every path below, so checkouts are byte-identical on every platform.
+* text=auto eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.tsv text eol=lf

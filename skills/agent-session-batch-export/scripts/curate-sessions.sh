@@ -1,4 +1,22 @@
 #!/usr/bin/env bash
+# CRLF self-check. An install smudged to CRLF (Windows autocrlf at clone time)
+# dies below with "$'\r': command not found"; this turns that into an explicit,
+# fixable message instead. Every physical line of the guard ends in a comment
+# on purpose: under CRLF the trailing CR is swallowed by the comment instead of
+# silently appending to the preceding word (a quoted word would grow a CR).
+__crlf_hit=0                                                                                                            # CRLF-GUARD
+if [[ -f "${BASH_SOURCE[0]}" && -r "${BASH_SOURCE[0]}" ]]; then                                                         # CRLF-GUARD
+  while IFS= read -r __crlf_line || [[ -n "$__crlf_line" ]]; do                                                         # CRLF-GUARD
+    if [[ "$__crlf_line" == *$'\r'* ]]; then __crlf_hit=1; break; fi                                                    # CRLF-GUARD
+  done < "${BASH_SOURCE[0]}"                                                                                           # CRLF-GUARD
+fi                                                                                                                     # CRLF-GUARD
+if [[ "$__crlf_hit" -eq 1 ]]; then                                                                                     # CRLF-GUARD
+  printf '%s\n' 'this script was installed with CRLF (Windows) line endings and cannot run under bash.' >&2            # CRLF-GUARD
+  printf '%s\n' "fix either way:" >&2                                                                                  # CRLF-GUARD
+  printf '%s\n' "  dos2unix \"${BASH_SOURCE[0]}\"" >&2                                                                 # CRLF-GUARD
+  printf '%s\n' '  reinstall:  npx --yes skills@latest add Samuka007/skills --skill agent-session-batch-export -g -y' >&2  # CRLF-GUARD
+  exit 3                                                                                                               # CRLF-GUARD
+fi                                                                                                                     # CRLF-GUARD
 # Trajectory curation workbench for coding-agent session JSONL.
 #
 # Goal: let a human build a curated set of RAW .jsonl trajectory material
@@ -31,6 +49,13 @@ MIN_LINES=0
 UI=fzf
 HARDLINK=0
 FROM=""
+
+# Scratch dir for scan and review. It was created only inside the scan block,
+# so `review` (whose default UI is fzf) died at its first $TMP reference with
+# "TMP: unbound variable" under set -u — on every platform. One definition
+# here covers every command; the EXIT trap cleans up on every exit path.
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
 usage() {
   cat <<'USAGE'
@@ -81,7 +106,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for dep in jq rg find awk sed grep sort cut mktemp; do
+for dep in jq rg find awk sed grep sort cut tr wc mktemp; do
   command -v "$dep" >/dev/null || { echo "$dep is required" >&2; exit 1; }
 done
 
@@ -222,8 +247,6 @@ mkdir -p "$OUTDIR"
 
 # ============================================================== scan
 if [[ "$cmd" == scan ]]; then
-  TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-
   # NUL-delimited find output piped into the loop. `read -d ''` needs bash 4+;
   # the `$'\0'` spelling below is what bash 3.2 (macOS) accepts, so one form
   # works on every bash the three target platforms ship.
@@ -336,10 +359,8 @@ if [[ "$cmd" == review ]]; then
   if [[ "$UI" == fzf ]]; then
     # preview: metadata + the opening of the actual prose, so the human judges
     # the real content rather than the one-line summary.
-    export CAND PREVIEW_PROSE="$TMP/preview_prose"
     cat > "$TMP/preview.sh" <<'PEOF'
 #!/usr/bin/env bash
-f="$(printf '%s' "$FZF_PROMPT" | true)"
 line="$1"
 file="$(printf '%s' "$line" | awk -F'\t' '{print $7}')"
 agent="$(printf '%s' "$line" | awk -F'\t' '{print $1}')"
@@ -430,9 +451,20 @@ if [[ "$cmd" == finalize ]]; then
   # whitespace, so empty fields survive. The TSV stays tab-delimited because
   # that is what humans edit; this is the machine-side re-split.
   sep="$(printf '\037')"
+  # Sanitize HERE, in the awk pass that fixes positions: a tab inside `reason`
+  # makes the row NF>10. The overflow column IS the session path, so there is
+  # no way to tell "tab as content" from "tab as separator" — silently guessing
+  # (merging $11 into $2) consumed the path and the session vanished from the
+  # corpus with exit 0. Reject the row LOUDLY instead: the human re-edits it.
   awk -F'\t' -v sep="$sep" '
-    { sub(/\r$/, "") }
-    NR > 1 && $1 == "keep" { print $1 sep $2 sep $3 sep $4 sep $5 sep $6 sep $7 sep $8 sep $9 sep $10 }
+    { sub(/\r$/, "")
+      if (NR > 1 && NF != 10) {
+        printf "  ! row %d has %d columns (want 10) — fix the tab/newline in it: %.60s\n", NR, NF, $0 > "/dev/stderr"
+        next
+      }
+    }
+    NR > 1 && $1 == "keep" { gsub(/[\t\r\n]/, " ", $2); gsub(/[\t\r\n]/, " ", $3)
+                             print $1 sep $2 sep $3 sep $4 sep $5 sep $6 sep $7 sep $8 sep $9 sep $10 }
   ' "$src" > "$rowsfile"
 
   # create up front: a zero-match selection must still yield an empty manifest.
@@ -447,6 +479,12 @@ if [[ "$cmd" == finalize ]]; then
     # on Windows, where the TSV may carry CRLF. Strip it from every field used
     # verbatim (the path above all) rather than only from $f.
     f="${f%$'\r'}"; cwd="${cwd%$'\r'}"; agent="${agent%$'\r'}"
+    # reason/suggested are agent-written free text: a stray tab shifts every
+    # later column and finalize then reads first_prompt as the path (verified:
+    # a tab inside reason made a kept session silently vanish from the corpus).
+    # Newlines break the TSV outright. Sanitize on ingest, like first_prompt.
+    reason="$(printf '%s' "$reason" | tr '\t\r\n' '   ')"
+    suggested="$(printf '%s' "$suggested" | tr '\t\r\n' '   ')"
     [[ -z "$f" ]] && continue
     [[ -f "$f" ]] || { echo "  ! missing: $f" >&2; continue; }
     slug=$(printf '%s' "$cwd" | sed 's#^/##; s#/#--#g; s#[^A-Za-z0-9._-]#_#g' | cut -c1-60)

@@ -1,4 +1,20 @@
 #!/usr/bin/env bash
+# CRLF self-check, same design as curate-sessions.sh: every physical line ends
+# in a comment so a CRLF-smudged install loses its CR into the comment instead
+# of appending it to a word; exit 3 (distinct from usage errors, exit 2).
+__crlf_hit=0                                                                                                            # CRLF-GUARD
+if [[ -f "${BASH_SOURCE[0]}" && -r "${BASH_SOURCE[0]}" ]]; then                                                         # CRLF-GUARD
+  while IFS= read -r __crlf_line || [[ -n "$__crlf_line" ]]; do                                                         # CRLF-GUARD
+    if [[ "$__crlf_line" == *$'\r'* ]]; then __crlf_hit=1; break; fi                                                    # CRLF-GUARD
+  done < "${BASH_SOURCE[0]}"                                                                                           # CRLF-GUARD
+fi                                                                                                                     # CRLF-GUARD
+if [[ "$__crlf_hit" -eq 1 ]]; then                                                                                     # CRLF-GUARD
+  printf '%s\n' 'this script was installed with CRLF (Windows) line endings and cannot run under bash.' >&2            # CRLF-GUARD
+  printf '%s\n' "fix either way:" >&2                                                                                  # CRLF-GUARD
+  printf '%s\n' "  dos2unix \"${BASH_SOURCE[0]}\"" >&2                                                                 # CRLF-GUARD
+  printf '%s\n' '  reinstall:  npx --yes skills@latest add Samuka007/skills --skill agent-session-batch-export -g -y' >&2  # CRLF-GUARD
+  exit 3                                                                                                               # CRLF-GUARD
+fi                                                                                                                     # CRLF-GUARD
 # One-command entry point for curating agent sessions.
 #
 # Wraps the four stages (scan -> screen -> review -> finalize) so the user runs
@@ -67,7 +83,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -f "$ENGINE" ]] || { echo "engine not found next to this script: $ENGINE" >&2; exit 1; }
-for dep in jq rg; do command -v "$dep" >/dev/null || { echo "$dep is required" >&2; exit 1; }; done
+for dep in jq rg awk sort cut tr wc cmp; do
+  command -v "$dep" >/dev/null || { echo "$dep is required" >&2; exit 1; }
+done
+# fzf is NOT a hard dependency: the staged pipeline needs none of it. A
+# missing fzf must fail LATE (after the tty check, at the picker itself) so a
+# headless caller still gets the staged fallback instead of a dead end —
+# SKILL.md advertises fzf as optional.
 
 # --stay holds the window open, and it has to apply to EVERY exit path (accept,
 # abort via ESC, a validation failure, a crash). A per-path `read` would have to
@@ -162,7 +184,12 @@ spawn_terminal() {
   # actually readable. Windows Terminal defaults to closeOnExit=graceful, i.e.
   # the window disappears the moment the command returns — the user never sees
   # where the corpus landed, let alone gets to answer any prompt.
-  local cmd="$SELF -o '$OUTDIR_ABS' --review-only --in-terminal --stay"
+  # %q: the skills-CLI install path usually contains spaces
+  # (/c/Users/<First Last>/...), and an unquoted $SELF made the child try to
+  # execute the first word of the path. Also defends OUTDIR_ABS (a single
+  # quote in it broke the same construct). printf %q yields a reusable word.
+  local cmd
+  printf -v cmd '%q -o %q --review-only --in-terminal --stay' "$SELF" "$OUTDIR_ABS"
   [[ $NO_FINALIZE -eq 1 ]] && cmd="$cmd --no-finalize"
 
   # ── Native Windows (Git Bash / MSYS) ──────────────────────────────────────
@@ -226,16 +253,35 @@ spawn_terminal() {
   done
 
   # Last resort: tmux gives us a real tty on any host that has it.
+  # NOT exec'd: a headless caller (agent, CI) cannot attach — `exec tmux
+  # attach` died with "open terminal failed: not a terminal" and the staged
+  # fallback below was never reached. Create the session, then let the caller
+  # decide; an interactive human attaches with the printed command.
   if command -v tmux >/dev/null 2>&1; then
     echo "no GUI terminal found — using tmux (attach with: tmux attach -t curate)"
     tmux kill-session -t curate 2>/dev/null || true
     tmux new-session -d -s curate -x 200 -y 50 bash -lc "bash $cmd" && {
-      if [[ -n "${TMUX:-}" ]]; then tmux switch-client -t curate
-      else exec tmux attach -t curate; fi
+      if [[ -n "${TMUX:-}" ]]; then tmux switch-client -t curate; fi
       return 0
     }
   fi
   return 1
+}
+
+staged_fallback() {
+  cat >&2 <<EOF
+
+No usable terminal here (headless run). Finish with the staged pipeline:
+
+  1. screen: read $OUTDIR_ABS/candidates.tsv and add 'suggested'
+     (keep|drop) + 'reason' columns (edit in place, or write
+     $OUTDIR_ABS/screen.tsv with a header naming those columns)
+  2. bash $ENGINE review --ui tsv -o $OUTDIR_ABS
+     -> writes $OUTDIR_ABS/decisions.tsv
+  3. edit the decision column to keep|drop
+  4. bash $ENGINE finalize -o $OUTDIR_ABS
+     -> materializes OUT/keep/ + manifest.json and verifies every copy
+EOF
 }
 
 if ! have_tty; then
@@ -245,24 +291,29 @@ if ! have_tty; then
     # works; do not claim we are falling back when we are not.
     echo "note: stdout is not a tty; fzf will use /dev/tty directly" >&2
   elif spawn_terminal; then
-    # The window owns the rest of the run; this process is done. We cannot
-    # observe the child's progress from here, so we do not pretend to: the
-    # spawned run prints its own result path and verifies its own copies.
+    # wt.exe (and friends) exit 0 when the spawn is DELEGATED, not when a
+    # visible window is running — on a disconnected desktop "success" can mean
+    # a dead child. Report the spawn as requested, never as verified, and
+    # always hand the caller the staged escape hatch.
     echo
-    echo "picker opened in a new window — finish there (TAB mark, ENTER confirm)."
+    echo "picker requested in a new window (the spawn itself is not verifiable from here)."
+    echo "If no window appeared, finish with the staged pipeline below instead."
     echo "corpus will land in: $OUTDIR_ABS/keep"
+    staged_fallback
     exit 0
   else
-    cat >&2 <<EOF
-
-No terminal available and none could be opened.
-Use the hand-edit workflow instead:
-
-  vi $OUTDIR_ABS/decisions.tsv      # set column 1 to keep|drop
-  bash $ENGINE finalize -o $OUTDIR_ABS
-EOF
+    staged_fallback
     exit 1
   fi
+fi
+
+# fzf missing at runtime must not waste a spawn: the window would open, scan,
+# then die at the fzf call. (The dep check above already gates this for the
+# common case; this guards an interactive caller whose PATH changed.)
+if ! command -v fzf >/dev/null 2>&1; then
+  echo "fzf not found — the interactive picker cannot run." >&2
+  staged_fallback
+  exit 1
 fi
 
 # -------------------------------------------------------------- stage 2+3: pick
@@ -347,21 +398,33 @@ chmod +x "$PREVIEW"
 # happened to sit at the same line, silently mislabelling the whole set if the
 # screening were sorted differently.
 if [[ -f "$SCREEN" ]]; then
+  # Header-name resolution on BOTH sides (the candidates side used to take
+  # $NF, a positional read that silently keys the join wrong if the candidate
+  # shape ever grows a trailing column). CRLF strip on every input line: a
+  # screen.tsv saved CRLF by a Windows-side screening rode its CR onto the
+  # session_file value, the /\.jsonl$/ key regex never matched, and the whole
+  # screening came through as empty suggestions.
   awk -F'\t' 'BEGIN{OFS="\t"}
     NR==FNR {
-      if (FNR==1) { for (i=1;i<=NF;i++) { if ($i=="suggested") si=i; if ($i=="reason") ri=i }
+      { sub(/\r$/, "") }
+      if (FNR==1) { for (i=1;i<=NF;i++) { if ($i=="suggested") si=i; if ($i=="reason") ri=i; if ($i=="session_file") fi=i }
                     if (!si) { print "screen.tsv has no `suggested` column" > "/dev/stderr"; exit 2 }
                     next }
-      # key on the session_file value, whatever column it sits in
-      for (j=1;j<=NF;j++) if ($j ~ /\.jsonl$/) k=$j
-      sug[k]=si?$(si):""; why[k]=ri?$(ri):""
+      # reason is free text: a tab in it shifts every later column downstream
+      # (a kept session then silently vanished at finalize). Same sanitizing
+      # the finalize reader applies on its side.
+      sug_txt = si ? $(si) : ""; why_txt = ri ? $(ri) : ""
+      gsub(/[\t\r\n]/, " ", sug_txt); gsub(/[\t\r\n]/, " ", why_txt)
+      k = fi ? $fi : ""
+      sug[k]=sug_txt; why[k]=why_txt
       next
     }
-    FNR==1 { next }
+    { sub(/\r$/, "") }
+    FNR==1 { fi=0; for (i=1;i<=NF;i++) if ($i=="session_file") fi=i; next }
     # Rebuild the fields explicitly rather than printing $0 with two appends:
     # $0 is the raw line and appending to it re-joins with OFS, which does not
     # reproduce a row whose fields were split on tabs.
-    { f=$(NF)
+    { f = fi ? $fi : $NF
       for (i=1;i<=NF;i++) printf "%s\t", $i
       printf "%s\t%s\n", (f in sug ? sug[f] : ""), (f in why ? why[f] : "") }
   ' "$SCREEN" "$CAND" > "$OUTDIR_ABS/.rows.tsv"

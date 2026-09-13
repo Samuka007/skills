@@ -21,17 +21,19 @@ not a lossy view of it.
 
 ## Pipeline
 
-Prefer the one-command entry point. It runs the whole pipeline and opens a
-picker in a real terminal, spawning one if necessary:
+Pick the entry point by what can see a terminal, not by preference:
+
+**Interactive shell (you or the user can see a terminal).** The one-command
+entry point runs the whole pipeline and opens a picker, spawning a terminal if
+necessary:
 
 ```bash
 bash scripts/pick-sessions.sh -o ./cur --agent codex --min-lines 20
 ```
 
-That is the intended UX. The four stages below are the manual equivalent, and
-what the entry point calls internally.
-
-Run the stages in order. Stage 2 is yours to perform; the rest are commands.
+**Agent / headless / CI (no visible terminal).** Do NOT loop on the entry
+point. Run the four stages; they are what the entry point calls internally, and
+the staged path is fully supported (it is the same code):
 
 ```bash
 C=scripts/curate-sessions.sh
@@ -41,13 +43,18 @@ bash $C scan -o /tmp/cur --workspace cits4012 --min-lines 20
 
 # 2. screen — YOU read the candidates and annotate them (see Screening)
 #
-# 3. review — human keep/drop -> OUT/decisions.tsv
-bash $C review --ui fzf -o /tmp/cur      # multi-select, full-prose preview
-bash $C review --ui tsv -o /tmp/cur      # no TUI: emit the TSV to hand-edit
+# 3. review --ui tsv — emit decisions.tsv (no TUI, never blocks)
+bash $C review --ui tsv -o /tmp/cur
 
-# 4. finalize — materialize -> OUT/keep/*.jsonl + OUT/manifest.json
+# 4. edit decisions.tsv: set decision=keep|drop per row
+#
+# 5. finalize — materialize -> OUT/keep/*.jsonl + OUT/manifest.json
 bash $C finalize -o /tmp/cur
 ```
+
+If you invoke the entry point from a headless context anyway, it refuses to
+pretend: it prints this same staged sequence with your actual paths and exits
+non-zero.
 
 Each stage has one completion criterion:
 
@@ -102,10 +109,10 @@ The picker runs this check itself after finalizing and prints
 - `--topic REGEX` — extended regex over extracted prose
 - `--since YYYY-MM-DD`
 - `--min-lines N` — drop stub sessions
-- `--latest` — collapse a workspace's stale rollout files to the newest
 
 `review`:
-- `--ui fzf` (default when fzf is present) or `--ui tsv`
+- `--ui fzf` (default when fzf is present) or `--ui tsv` — tsv emits
+  `decisions.tsv` for hand-editing, the headless path's step 2
 - `--resume` — keep decisions already in `decisions.tsv`
 
 `finalize`:
@@ -149,34 +156,46 @@ Two rules follow, and both are load-bearing:
 
 ## WSL and Windows
 
-There are two different "Windows" situations and they need different answers.
-Both are handled automatically; this section is what to expect.
+The primary setup: the agent loop runs **inside WSL**, and the Windows side is
+where a visible picker terminal can be opened. Two consequences:
 
-### Bash running inside WSL
+### Sessions live on both sides; scan reads the side whose HOME you are in
 
-The common case: you are in a WSL shell, `fzf` is available, and the sessions
-you want to curate may live on either side (`~/.codex` in WSL, or
-`/mnt/c/Users/<you>/.codex` on the Windows side — same file format, and the
-script reads either).
+`scan` reads `$HOME/.claude/projects` and `$HOME/.codex/sessions` of the
+environment the script runs in. Running inside WSL that is the Linux side; the
+Windows-side trees (`/mnt/c/Users/<you>/.claude/projects`,
+`/mnt/c/Users/<you>/.codex/sessions`) are the same file format but are NOT
+scanned automatically. To include them, run the script against that HOME:
 
-If the shell has a real terminal, `pick-sessions.sh` just runs. If it does not
-— invoked from a tool call, a CI step, or any non-interactive context — it
-**opens its own terminal** and runs the picker there, in this order:
+```bash
+HOME=/mnt/c/Users/<you> bash $C scan -o /tmp/cur-win --agent both
+```
+
+(Fine to do from WSL — the format is identical, and `--workspace` matching
+works the same because Windows cwds are normalised to `/` separators.)
+
+### No visible terminal → the picker opens one on the Windows side
+
+If the WSL shell has a real terminal, `pick-sessions.sh` just runs. If it does
+not — invoked from a tool call, a CI step, or any non-interactive context — it
+**requests a Windows-side terminal** and runs the picker there, in this order:
 
 1. `wt.exe -- wsl.exe -d $WSL_DISTRO_NAME` — Windows Terminal (preferred)
 2. `cmd.exe /c start … wsl.exe` — a plain console window
-3. (native Linux desktops) `x-terminal-emulator`, `alacritty`, `kitty`,
+3. (native Linux desktops only) `x-terminal-emulator`, `alacritty`, `kitty`,
    `wezterm`, `foot`, `gnome-terminal`, `konsole`, `xterm`
-4. `tmux` — the last resort, because it supplies a real tty with no GUI
+4. `tmux` — creates the session and tells you how to attach; it never hijacks
+   the calling process, so a headless caller survives to see the staged fallback
 
-If nothing can be opened it prints the hand-edit TSV workflow instead of
-pretending success. Launching a window is not the same as the user having
-picked, so the spawned run prints its own result path once it is done; the
-parent process exits immediately and does not claim to verify the child.
+A spawn is **requested, not verified**: `wt.exe` exits 0 the moment the spawn
+is delegated, so "requested" can still mean no visible window appeared
+(disconnected desktop, service session). The parent therefore prints the
+staged pipeline alongside the spawn message and exits 0; if no window showed
+up, just run the staged commands it printed.
 
 ### Bash running natively on Windows (Git Bash / MSYS)
 
-Here the whole script runs under MSYS, with no WSL in the picture.
+Supported, but secondary: the whole script runs under MSYS, no WSL involved.
 
 Setup is two packages — MSYS already bundles the rest of the POSIX userland:
 
@@ -189,24 +208,3 @@ Bash** instead, which gives the picker a real tty.
 
 Point the scripts at the Windows-side session trees: `~/.codex` and
 `~/.claude` resolve to `C:\Users\<you>\…`, which hold the same file formats.
-
-## Maintainer notes
-
-Development notes live in the repository, not in this directory — only
-`SKILL.md` and `scripts/` are shipped to users. In the source repo that is
-`docs/<skill-name>/`; for this skill:
-
-```
-docs/agent-session-batch-export/INTERNALS.md
-```
-
-It records why the scripts are written the way they are: the portability traps
-(each of which fails *silently* if its handling is "simplified" away), the
-verification coverage table, and how to drive the TUI headlessly for testing.
-Read it before editing `scripts/`.
-
-Two behaviours are easy to reintroduce by accident, so they are called out here
-as well: **fields are split on `\x1f`, never on tab** (bash `read` collapses tab
-as IFS whitespace, silently shifting every later column when a field is empty),
-and **an `MSYS_NO_PATHCONV` prefix on a command exports to the whole child
-tree** — which breaks `jq.exe`'s ability to open `/c/...` paths.
