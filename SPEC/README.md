@@ -15,10 +15,11 @@ at from here.
 | # | Title | Status | Evidence |
 |---|---|---|---|
 | 1 | `funnel --in-place` integration mode | **done** | commit `aef33f4`; `test/funnel-e2e.sh` green (real tmux + fzf: `[1 candidates; 0 pre-selected]` → fill → `[1;1]` → ENTER → `verified 1/1`); `ty` + `ruff check` + `ruff format --check` clean |
-| 2 | yolo mode (no-review export on explicit opt-out) | **in progress** | — |
+| 2 | yolo mode (no-review export on explicit opt-out) | **done** | commit `33361ee`; `test/yolo-e2e.sh` green (32 checks, discriminating power proved by mutation); `accept.sh` + `shellcheck` + `funnel-e2e.sh` clean; PM re-ran the real entry point (`pick-sessions.sh -o DIR -y --review-only --yolo` → rule printed, 2 of 3 kept, manifest entries carry `mode=yolo`/`reviewed=false`/`approved_by=user-opt-out`, `verified 2/2`, gated path adds no such keys); closed |
 | 3 | READMEs for both skills | **done** | commit `f027a36`; accepted (read end-to-end against SKILL.md and funnel.py, links resolve, synthetic-data smoke reproduces the documented 5→1 funnel table); closed |
 | 4 | recorded select+export demo in README | **done** | cast/script/transcript in `a297d7f`, embedded by `608ed88`; accepted by re-running `docs/agent-session-batch-export/demo.sh` (rc=0, decisions.tsv shows human override both directions, 2/2 copies byte-identical); closed |
-| 5 | SKILL.md: funnel mention + yolo escape clause | **blocked on #2** | depends on #2's final wording; lane: docs |
+| 5 | SKILL.md: funnel mention + yolo escape clause | **half done** | escape clause landed with #2 (`33361ee`); the funnel subsection is still missing — `grep -n -i funnel SKILL.md` finds nothing |
+| 6 | INTERNALS.md: record this round's traps | **registered** | funnel contract, yolo provenance, dev-tooling policy |
 
 ## Decisions and constraints (apply to all future items)
 
