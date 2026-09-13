@@ -88,6 +88,8 @@ counts, last stop reason, chars — without filtering), `presets` (list them).
 
 ## Demo
 
+![The picker reading a funnel's survivors: pre-selection, TAB override each way, ENTER, verified 2/2](../../docs/agent-session-batch-export/demo.gif)
+
 The downstream half of this pipeline — the picker reading a funnel's survivors —
 recorded on synthetic sessions:
 
@@ -96,8 +98,11 @@ asciinema play docs/agent-session-batch-export/demo.cast
 ```
 
 It covers pre-selection, a human overriding the suggestion in both directions,
-and the byte-identity check after `finalize`. The recording and its
-reproduction script live in the sibling skill's repo-only `docs/` directory:
+and the byte-identity check after `finalize`. GitHub cannot play an asciicast
+(the player is a `<script>` embed, which its Markdown filters out), so the GIF
+above is what renders inline; `asciinema play` is the interactive path. The
+recording, that GIF and the reproduction script live in the sibling skill's
+repo-only `docs/` directory:
 [`demo-transcript.txt`](../../docs/agent-session-batch-export/demo-transcript.txt)
 (text version) and [`demo.sh`](../../docs/agent-session-batch-export/demo.sh).
 

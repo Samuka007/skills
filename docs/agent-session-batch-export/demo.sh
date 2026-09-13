@@ -14,6 +14,18 @@
 # Replay for a human:
 #   asciinema play demo.cast          # or open on asciinema.org after upload
 #
+# The README embeds demo.gif, rendered from the cast — GitHub renders images but
+# not asciicasts (the player is a <script> embed, which GFM filters out):
+#   nix shell nixpkgs#asciinema-agg -c agg --theme github-dark --font-size 14 \
+#     --fps-cap 15 --speed 1.5 --last-frame-duration 3 --select 0..4.1 \
+#     --text-font-family "JetBrainsMono Nerd Font Mono,DejaVu Sans" \
+#     --font-dir ~/.local/share/fonts --font-dir "$DEJAVU_DIR" \
+#     demo.cast demo.gif              # 1277x804, ~210 KB, loops forever
+# `--select 0..4.1` drops the last event (tmux exits, asciinema prints
+# "[exited]") on agg's post-speed timeline; the font flags exist because agg
+# finds no fonts on NixOS without an explicit --font-dir (↳ comes from DejaVu
+# Sans, the Nerd Font powers the ⑂ prompt glyph).
+#
 # Requires: bash, jq (jaq is fine), rg, tmux, asciinema, fzf.
 # On NixOS without tmux/asciinema, each is pulled ad hoc via `nix shell`.
 set -euo pipefail

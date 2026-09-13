@@ -111,9 +111,16 @@ the staged commands, which the entry point prints alongside every spawn.
 
 ## Demo
 
+![Picker review flow: two rows pre-selected, a TAB override each way, ENTER, verified 2/2 byte-identical](../../docs/agent-session-batch-export/demo.gif)
+
 The real picker flow, recorded on synthetic sessions (fabricated `.jsonl`, no
 real transcript data): pre-selection from the screen, a human overriding the
 agent's suggestion in both directions, ENTER, and the byte-identity check.
+
+GitHub renders images but not asciicasts (the player needs a `<script>` tag,
+which its Markdown filters out), so the animated GIF above — rendered from the
+recording with `agg` and committed beside it — is what plays inline. The
+recording itself stays the interactive version:
 
 ```bash
 asciinema play docs/agent-session-batch-export/demo.cast
