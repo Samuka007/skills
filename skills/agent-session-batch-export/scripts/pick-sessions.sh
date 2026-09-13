@@ -336,8 +336,14 @@ chmod +x "$PREVIEW"
 # Build the fzf row set: candidates columns + suggested + reason.
 if [[ -f "$SCREEN" ]]; then
   # Both sides must exclude their header or paste() misaligns by one row.
+  # screen.tsv is `session_file <TAB> suggested <TAB> reason`, and the row layout
+  # every downstream reader assumes is `… 7 suggested · 8 reason`. Emitting
+  # `$3"\t"$2` here (reason first) contradicted that: the pre-selection count
+  # matched on $7 and always found 0, the preview labelled the reason as the
+  # suggestion, and decisions.tsv carried the two columns swapped. Only the
+  # sort key ($8) happened to agree. Emit suggested then reason.
   paste <(awk -F'\t' 'NR>1' "$CAND") \
-        <(awk -F'\t' 'NR>1{print $3"\t"$2}' "$SCREEN") > "$OUTDIR_ABS/.rows.tsv"
+        <(awk -F'\t' 'NR>1{print $2"\t"$3}' "$SCREEN") > "$OUTDIR_ABS/.rows.tsv"
 else
   awk -F'\t' 'BEGIN{OFS="\t"} NR>1{print $0,"",""}' "$CAND" > "$OUTDIR_ABS/.rows.tsv"
 fi
