@@ -50,9 +50,12 @@ bash $C scan -o /tmp/cur --workspace cits4012 --min-lines 20
 # 3. review --ui tsv — emit decisions.tsv (no TUI, never blocks)
 bash $C review --ui tsv -o /tmp/cur
 
-# 4. edit decisions.tsv: set decision=keep|drop per row
+# 4. THE USER edits decisions.tsv: set decision=keep|drop per row.
+#    STOP here and run the Hand-off gate first — never fill the
+#    decision column yourself.
 #
-# 5. finalize — materialize -> OUT/keep/*.jsonl + OUT/manifest.json
+# 5. finalize — ONLY after user approval (gate step 3), as their delegate:
+#    materialize -> OUT/keep/*.jsonl + OUT/manifest.json
 bash $C finalize -o /tmp/cur
 ```
 
@@ -173,7 +176,7 @@ The picker runs this check itself after finalizing and prints
 
 `review`:
 - `--ui fzf` (default when fzf is present) or `--ui tsv` — tsv emits
-  `decisions.tsv` for hand-editing, the headless path's step 2
+  `decisions.tsv` for hand-editing, the headless path's step 3
 - `--resume` — keep decisions already in `decisions.tsv`
 
 `finalize`:
