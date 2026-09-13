@@ -16,8 +16,8 @@ at from here.
 |---|---|---|---|
 | 1 | `funnel --in-place` integration mode | **done** | commit `aef33f4`; `test/funnel-e2e.sh` green (real tmux + fzf: `[1 candidates; 0 pre-selected]` → fill → `[1;1]` → ENTER → `verified 1/1`); `ty` + `ruff check` + `ruff format --check` clean |
 | 2 | yolo mode (no-review export on explicit opt-out) | **in progress** | — |
-| 3 | READMEs for both skills | **done** | commit `f027a36`; accepted (read end-to-end against SKILL.md and funnel.py, synthetic-data smoke reproduces the documented 5→1 funnel table) |
-| 4 | recorded select+export demo in README | **in progress** | DemoRecorder running |
+| 3 | READMEs for both skills | **done** | commit `f027a36`; accepted (read end-to-end against SKILL.md and funnel.py, links resolve, synthetic-data smoke reproduces the documented 5→1 funnel table); closed |
+| 4 | recorded select+export demo in README | **done** | cast/script/transcript in `a297d7f`, embedded by `608ed88`; accepted by re-running `docs/agent-session-batch-export/demo.sh` (rc=0, decisions.tsv shows human override both directions, 2/2 copies byte-identical); closed |
 | 5 | SKILL.md: funnel mention + yolo escape clause | **blocked on #2** | depends on #2's final wording; lane: docs |
 
 ## Decisions and constraints (apply to all future items)
