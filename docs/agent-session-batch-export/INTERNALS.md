@@ -254,6 +254,18 @@ These apply to the engine (`scripts/curate-sessions.sh`).
     bare .sh under WSL bash remains the Linux-side path, not an error.
     Verified: PS 5.1 param pass-through with quoted paths, exit-code
     propagation, WSL-bash exclusion on the PATH probe.
+46. **Generated scaffold over free-form contract.** The screening file's
+    NAME was never specified anywhere: scan told the agent to "add two
+    columns", one run invented `candidates.screen.tsv`, the next run
+    inherited that invented name from the previous run's artifacts, review
+    found nothing, and the agent rewrote `decisions.tsv` from scratch —
+    twice on the same user's machine, because artifacts look authoritative.
+    Fix: scan deterministically emits `OUT/screen.tsv` (candidates + two
+    empty columns); the agent's stage 2 is "fill these two columns in THIS
+    file"; `review --ui tsv` consumes the known shape with a strict 9-column
+    check (tab-in-field rows are named and rejected, never silently
+    re-joined) and defaults `decision` to `suggested`. A contract the
+    pipeline generates itself cannot drift from what the pipeline reads.
 
 ## Verification coverage
 

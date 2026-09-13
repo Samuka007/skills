@@ -35,10 +35,23 @@ pos "min-lines" "${ml:-0}"
 tp="$(bash "$C" scan -o "$WORK/tp" --topic 'zzz-no-such-topic-xyz' 2>&1 | sed -n 's/^candidates: \([0-9]*\).*/\1/p')"
 chk "absent topic -> 0" "${tp:-x}" "0"
 
+step "screen scaffold contract (deterministic, not heuristic)"
+chk "scaffold exists" "$(test -f "$WORK/screen.tsv" && echo y)" "y"
+chk "scaffold header" "$(head -1 "$WORK/screen.tsv")" "$(head -1 "$WORK/candidates.tsv" | sed 's/$/\tsuggested\treason/')"
+chk "scaffold rows" "$(awk -F'\t' 'NR>1' "$WORK/screen.tsv" | wc -l | tr -d ' ')" "${total:-0}"
+chk "scaffold cols" "$(awk -F'\t' 'NR==1{print NF}' "$WORK/screen.tsv")" "9"
+
 step "review --ui tsv"
 bash "$C" review --ui tsv -o "$WORK" >/dev/null 2>&1
 chk "rows" "$(awk -F'\t' 'NR>1' "$WORK/decisions.tsv" | wc -l | tr -d ' ')" "${total:-0}"
 chk "cols" "$(awk -F'\t' 'NR==1{print NF}' "$WORK/decisions.tsv")" "10"
+
+step "review tsv consumes filled scaffold (suggested -> decision)"
+bash "$C" scan -o "$WORK/sf" >/dev/null 2>&1
+awk -F'\t' 'BEGIN{OFS="\t"} FNR==1{print; next} { $8=(FNR<=3)?"keep":"drop"; $9="evidence"; print }' \
+  "$WORK/sf/screen.tsv" > "$WORK/sf/f" && mv "$WORK/sf/f" "$WORK/sf/screen.tsv"
+bash "$C" review --ui tsv -o "$WORK/sf" >/dev/null 2>&1
+chk "prefilled keeps" "$(awk -F'\t' 'NR>1 && $1=="keep"' "$WORK/sf/decisions.tsv" | wc -l | tr -d ' ')" "2"
 
 step "validate"
 bash "$C" validate -o "$WORK" --from "$WORK/decisions.tsv" 2>&1 | sed -n '1,3p'

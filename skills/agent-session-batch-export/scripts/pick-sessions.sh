@@ -309,9 +309,8 @@ Interactive (the USER opens their own terminal):
 
 Non-interactive (no terminal available to the user either):
 
-  1. screen: read $OUTDIR_ABS/candidates.tsv and add 'suggested'
-     (keep|drop) + 'reason' columns (edit in place, or write
-     $OUTDIR_ABS/screen.tsv with a header naming those columns)
+  1. screen: fill the last two columns of $OUTDIR_ABS/screen.tsv
+     (suggested=keep|drop, reason=one line — no tabs/newlines)
   2. bash $ENGINE review --ui tsv -o $OUTDIR_ABS
      -> writes $OUTDIR_ABS/decisions.tsv
   3. edit the decision column to keep|drop

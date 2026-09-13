@@ -318,9 +318,23 @@ if [[ "$cmd" == scan ]]; then
 
   echo "candidates: $n  (workspace='${WORKSPACE:-*}' topic='${TOPIC:-*}' since='${SINCE:-*}' min_lines=$MIN_LINES)"
   echo "wrote: $CAND"
+
+  # Deterministic screening scaffold, not a free-form contract: the agent's
+  # stage 2 is "fill these two columns in THIS file", the same way a human
+  # would. Before this, the screening file's NAME was never specified
+  # anywhere — one run invented candidates.screen.tsv, the next run inherited
+  # the invented name from the previous run's artifacts, review could not
+  # find it, and the agent fell back to rewriting decisions.tsv from scratch.
+  # One canonical file, generated here: candidates columns + two empty ones.
+  SCREEN="$OUTDIR/screen.tsv"
+  awk -F'\t' 'BEGIN{OFS="\t"}
+    NR == 1 { print $0, "suggested", "reason"; next }
+    { print $0, "", "" }
+  ' "$CAND" > "$SCREEN"
+  echo "screen scaffold: $SCREEN  (fill the last two columns: suggested=keep|drop, reason=one line)"
   echo
-  echo "next: hand this file to the agent for topic screening (it adds"
-  echo "      'suggested' and 'reason' columns), then run: $0 review -o $OUTDIR"
+  echo "next: agent fills 'suggested' (keep|drop) + 'reason' in $SCREEN,"
+  echo "      then run: $0 review --ui tsv -o $OUTDIR"
   exit 0
 fi
 
@@ -444,12 +458,48 @@ PEOF
       ' "$TMP/keep_paths.txt" "$CAND"
     } > "$DEC"
   else
-    # tsv mode: emit decisions.tsv with a blank decision column for hand-editing
-    { printf 'decision\treason\tsuggested\tagent\tcwd\tmtime\tsize_bytes\tn_lines\tfirst_prompt\tsession_file\n'
-      if [[ -n "$prev" ]]; then cat "$prev"; else
-        awk -F'\t' 'FNR == 1 { next } { print "\t\t\t" $0 }' "$CAND"
+    # tsv mode: decisions.tsv IS the filled screen.tsv (columns re-ordered,
+    # decision defaults to the agent's suggested). No join heuristics: the
+    # agent edited the file scan generated, so the shape is known — the last
+    # two columns are suggested/reason, and the row set is the candidate set.
+    # --resume keeps a previous decisions.tsv verbatim instead.
+    if [[ -n "$prev" ]]; then
+      { printf 'decision\treason\tsuggested\tagent\tcwd\tmtime\tsize_bytes\tn_lines\tfirst_prompt\tsession_file\n'
+        cat "$prev"
+      } > "$DEC"
+    elif [[ -f "$OUTDIR/screen.tsv" ]]; then
+      awk -F'\t' 'BEGIN{OFS="\t"}
+        {
+          sub(/\r$/, "")
+        }
+        NF > 9 {
+          # a tab inside reason shifts the path right; the row is unfixable
+          # without guessing — name it and fail (same policy as finalize)
+          print "  ! screen.tsv row " FNR " has " NF " columns (want 9) — tab or newline inside a field?" > "/dev/stderr"
+          bad = 1; next
+        }
+        NF == 9 {
+          if (FNR == 1) { print "decision", "reason", "suggested", $1, $2, $3, $4, $5, $6, $7; next }
+          # scaffold layout: $1..$7 = candidates columns, $8 = suggested,
+          # $9 = reason. decisions.tsv wants decision(reason) suggested + all 7.
+          d = ($8 == "keep" || $8 == "drop") ? $8 : ""
+          print d, $9, $8, $1, $2, $3, $4, $5, $6, $7
+          next
+        }
+        END { exit bad ? 1 : 0 }' "$OUTDIR/screen.tsv" > "$DEC" \
+      || { echo "screen.tsv malformed — fix the rows named above" >&2; exit 1; }
+      unfilled="$(awk -F'\t' 'NR>1 && $1=="" {c++} END{print c+0}' "$DEC")"
+      if [[ "$unfilled" -gt 0 ]]; then
+        echo "note: $unfilled row(s) have no suggested value — they arrive with an empty decision"
       fi
-    } > "$DEC"
+    else
+      { printf 'decision\treason\tsuggested\tagent\tcwd\tmtime\tsize_bytes\tn_lines\tfirst_prompt\tsession_file\n'
+        awk -F'\t' 'FNR == 1 { next } { print "\t\t\t" $0 }' "$CAND"
+      } > "$DEC"
+    fi
+    # sanity: reject a scaffold the agent edited into a wrong shape
+    awk -F'\t' 'NR==1{want=NF; next} NF!=want{bad++; print "  ! row " FNR " has " NF " columns (want " want ")"} END{if(bad) exit 1}' "$DEC" \
+      || { echo "decisions.tsv malformed — fix the rows named above" >&2; exit 1; }
     echo "wrote $DEC"
     echo "edit the decision column to keep|drop (reason is free text), then run:"
     echo "  $0 finalize -o $OUTDIR"

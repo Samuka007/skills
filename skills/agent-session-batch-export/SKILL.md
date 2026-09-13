@@ -85,9 +85,20 @@ Each stage has one completion criterion:
 
 ## Screening (stage 2)
 
-Read `candidates.tsv`, open the sessions that matter, then add two columns:
-`suggested` (`keep` / `drop`) and `reason` (one line of evidence). Write the
-annotated file back for the human.
+`scan` writes TWO files: `candidates.tsv` (7 columns, for reference) and
+`screen.tsv` — the same rows plus two trailing columns, `suggested` and
+`reason`, already headed and left empty. **Stage 2 is: edit `screen.tsv` in
+place.** Do not invent another filename (a previous run's
+`candidates.screen.tsv` is not a contract), do not write a new file from
+scratch: `review` and `finalize` read exactly `OUT/screen.tsv` /
+`OUT/decisions.tsv`. Fill, per row:
+
+- `suggested`: `keep` or `drop` (exactly these two words)
+- `reason`: one line of evidence (no tabs, no newlines — the file is TSV)
+
+Then `review --ui tsv` converts it into `decisions.tsv` with
+`decision` defaulted to your `suggested`; the human edits only the rows they
+disagree with.
 
 Judge from the prose, not from the metadata row. Column 6 (`first_prompt`) is a
 triage hint and can be blank: codex writes `<environment_context>`, AGENTS.md
