@@ -219,6 +219,28 @@ These apply to the engine (`scripts/curate-sessions.sh`).
     into the comment instead. Verified by experiment: the guard survives its
     own CRLF file and exits 3 before any compound-command syntax error (bash
     parses incrementally).
+42. **The product's interaction surface is defined by "can a Windows-side
+    terminal be launched", not by host taxonomy.** The picker once cycled
+    through Linux desktop terminals (`x-terminal-emulator`, `alacritty`,
+    …) when every spawn failed — a silent gamble on processes a headless
+    caller can neither see nor verify. Linux has no unified terminal-launch
+    mechanism, so on pure Linux the product does NOT open windows at all:
+    interaction is the user's own terminal (the `package`d launcher or
+    `review --ui fzf`), and headless runs get the staged pipeline. The
+    removed loop only ever fired where it could not work.
+43. **A test harness must not be part of the product surface.** tmux/zellij
+    spawning lives behind `--test-spawn tmux|zellij` — undocumented in
+    SKILL.md and `usage()`, never auto-triggered, idempotent (kills a stale
+    session of the same name first), and prints its own cleanup command. An
+    auto-firing "last resort" harness made the product's behavior depend on
+    what a box happened to have installed.
+44. **Hand the interactive step back to the user with a generated launcher,
+    not instructions.** `curate-sessions.sh package` writes
+    `OUT/open-review.sh` into the bundle next to the TSVs (absolute engine
+    path hardcoded at package time, fzf-checked, review → finalize → verify
+    in one run). Telling an agent to "print the command the user should run"
+    produced stale hand-transcribed paths; a generated file in the OUTDIR
+    bundle cannot drift from the data it operates on.
 
 ## Verification coverage
 
@@ -231,7 +253,9 @@ Not "the checks passed" — what each check covers, so the gaps are visible:
 | **review `--ui fzf`** (the default) | real PTY under tmux, Linux: TUI renders, preview shows real prose, TAB selects, ctrl-a/d work, ESC aborts without writing. Windows: covered through a real zellij session (`dump-screen` reads the rendered pane back), so the keypress path and the preview render are both observed — not merely the data path. (2026-09-13: this command had been DEAD on every platform — TMP unbound, trap 35 — so earlier "verified" entries were exercised against a hand-shaped file, not this command's happy path. Fixed and re-verified.) |
 | finalize byte-identity | `cmp` + recorded sha256, both platforms |
 | cross-platform identity | same file, sha256 computed under WSL and Git Bash, equal |
-| auto-spawn a terminal | Windows Git Bash: verified end-to-end. WSL: verified. |
+| auto-spawn a terminal | Windows Git Bash: verified end-to-end. WSL: verified. Pure Linux: no spawn exists anymore (trap 42) — headless runs print the staged pipeline. |
+| `package` launcher | generated on Linux, then run by hand in a user terminal: fzf opens over screened candidates, ENTER finalizes and verifies. |
+| `--test-spawn` harness | tmux/zellij session created detached, driven via send-keys/write-chars, read back via capture-pane/dump-screen, reclaimed by the printed cleanup command. |
 
 Known blind spots: macOS has never been run (only the BSD `stat`/`shasum`
 branches were exercised via a stub).

@@ -40,6 +40,7 @@ NO_FINALIZE=0
 YES=0
 ASK_OUT=1
 STAY=0
+TEST_SPAWN=""
 
 usage() {
   cat <<'USAGE'
@@ -77,6 +78,7 @@ while [[ $# -gt 0 ]]; do
     --no-finalize)   NO_FINALIZE=1; shift ;;
     --in-terminal)   IN_TERMINAL=1; shift ;;
     --stay)          STAY=1; shift ;;
+    --test-spawn)    TEST_SPAWN="$2"; shift 2 ;;   # undocumented: agent test harness
     -h|--help)       usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage; exit 2 ;;
   esac
@@ -241,37 +243,66 @@ spawn_terminal() {
     cmd.exe /c start "" wsl.exe -d "${WSL_DISTRO_NAME:-}" -- bash -lc "bash $cmd" >/dev/null 2>&1 && return 0
   fi
 
-  # Native Linux desktop terminals.
-  local t
-  for t in x-terminal-emulator alacritty kitty wezterm foot gnome-terminal konsole xterm; do
-    command -v "$t" >/dev/null 2>&1 || continue
-    echo "opening $t…"
-    case "$t" in
-      gnome-terminal|konsole) "$t" -- bash -lc "bash $cmd" >/dev/null 2>&1 ;;
-      *)                      "$t" -e bash -lc "bash $cmd" >/dev/null 2>&1 ;;
-    esac && return 0
-  done
-
-  # Last resort: tmux gives us a real tty on any host that has it.
-  # NOT exec'd: a headless caller (agent, CI) cannot attach — `exec tmux
-  # attach` died with "open terminal failed: not a terminal" and the staged
-  # fallback below was never reached. Create the session, then let the caller
-  # decide; an interactive human attaches with the printed command.
-  if command -v tmux >/dev/null 2>&1; then
-    echo "no GUI terminal found — using tmux (attach with: tmux attach -t curate)"
-    tmux kill-session -t curate 2>/dev/null || true
-    tmux new-session -d -s curate -x 200 -y 50 bash -lc "bash $cmd" && {
-      if [[ -n "${TMUX:-}" ]]; then tmux switch-client -t curate; fi
-      return 0
-    }
-  fi
   return 1
+}
+
+# TEST-ONLY spawn (not documented in SKILL.md, never auto-triggered): a
+# monitored multiplexer for the agent that is ITERATING on this skill, chosen
+# per platform — tmux where it exists (Linux/WSL), zellij where tmux does not
+# (native Windows, scoop zellij; dump-screen reads the pane back). Creates a
+# detached session running the picker so the agent can drive the TUI
+# programmatically (send-keys / write-chars, then capture-pane / dump-screen).
+# Idempotent: a stale session of the same name is killed first; the cleanup
+# command is printed so the caller can reclaim it. A headless caller canNOT
+# attach, so this never execs/attaches — it prints and returns.
+test_spawn() { # $1 = tmux|zellij
+  local tool="$1" cmd
+  printf -v cmd '%q -o %q --review-only --in-terminal --stay' "$SELF" "$OUTDIR_ABS"
+  [[ $NO_FINALIZE -eq 1 ]] && cmd="$cmd --no-finalize"
+  local sess="curate-test"
+  if [[ "$tool" == tmux ]]; then
+    command -v tmux >/dev/null 2>&1 || { echo "tmux not found" >&2; return 1; }
+    tmux kill-session -t "$sess" 2>/dev/null || true
+    tmux new-session -d -s "$sess" -x 200 -y 50 bash -lc "bash $cmd" || return 1
+    echo "test session created: tmux session '$sess'"
+    echo "attach:    tmux attach -t $sess"
+    echo "drive:     tmux send-keys -t $sess '<keys>'"
+    echo "read back: tmux capture-pane -p -t $sess"
+    echo "cleanup:   tmux kill-session -t $sess"
+  else
+    if [[ -z "${MSYSTEM:-}" ]]; then
+      echo "zellij is the WINDOWS-side test multiplexer (no tmux there); use --test-spawn tmux on Linux/WSL" >&2
+      return 1
+    fi
+    command -v zellij >/dev/null 2>&1 || { echo "zellij not found (scoop install zellij)" >&2; return 1; }
+    zellij delete-session "$sess" --force 2>/dev/null || true
+    # Two steps, both verified against zellij 0.45: an invocation with a bare
+    # command after `--` is REJECTED as a subcommand, so first boot the empty
+    # session, then `run -- <cmd>` places the picker in its first pane.
+    zellij --session "$sess" >/dev/null 2>&1 </dev/null || return 1
+    sleep 1
+    zellij --session "$sess" run -- bash -lc "bash $cmd" >/dev/null 2>&1 </dev/null || return 1
+    echo "test session created: zellij session '$sess'"
+    echo "attach:    zellij attach $sess"
+    echo "drive:     zellij --session $sess action write-chars '<text>' ; zellij --session $sess action send-keys Enter"
+    echo "read back: zellij --session $sess action dump-screen"
+    echo "cleanup:   zellij delete-session $sess --force"
+  fi
+  return 0
 }
 
 staged_fallback() {
   cat >&2 <<EOF
 
-No usable terminal here (headless run). Finish with the staged pipeline:
+No usable terminal here (headless run). Two ways to finish:
+
+Interactive (the USER opens their own terminal):
+
+  bash $ENGINE package -o $OUTDIR_ABS
+  -> writes $OUTDIR_ABS/open-review.sh; the user runs: bash open-review.sh
+     in any terminal and gets the fzf picker, then finalize+verify in one go
+
+Non-interactive (no terminal available to the user either):
 
   1. screen: read $OUTDIR_ABS/candidates.tsv and add 'suggested'
      (keep|drop) + 'reason' columns (edit in place, or write
@@ -285,6 +316,16 @@ EOF
 }
 
 if ! have_tty; then
+  # TEST-ONLY path first: an explicit --test-spawn tmux|zellij creates a
+  # drivable session instead of the product's normal spawn attempts. Not part
+  # of the product's interaction surface; kept out of SKILL.md on purpose.
+  if [[ -n "$TEST_SPAWN" ]]; then
+    case "$TEST_SPAWN" in
+      tmux|zellij) test_spawn "$TEST_SPAWN" || exit 1 ;;
+      *) echo "--test-spawn wants tmux or zellij, got '$TEST_SPAWN'" >&2; exit 2 ;;
+    esac
+    exit 0
+  fi
   if [[ $IN_TERMINAL -eq 1 ]]; then
     # We were spawned into a terminal but stdout is not a tty — e.g. someone
     # redirected it to a log. fzf opens /dev/tty on its own, so the picker still
@@ -302,6 +343,13 @@ if ! have_tty; then
     staged_fallback
     exit 0
   else
+    # On pure Linux there is no terminal this product can launch: interaction
+    # is the caller's own terminal (user runs the `package`d launcher or
+    # review --ui fzf), or the staged pipeline. Say so plainly instead of
+    # silently trying desktop terminals no headless agent can see.
+    if [[ -n "${WSL_DISTRO_NAME:-}" || -n "${MSYSTEM:-}" ]]; then
+      echo "no Windows-side terminal could be opened from this environment." >&2
+    fi
     staged_fallback
     exit 1
   fi

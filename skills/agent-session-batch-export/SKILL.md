@@ -52,6 +52,20 @@ bash $C review --ui tsv -o /tmp/cur
 bash $C finalize -o /tmp/cur
 ```
 
+**When the user CAN open a terminal, but the agent cannot** (pure Linux, no
+desktop): after stage 2, generate the one-click launcher and hand it over —
+that IS the interactive review for this environment:
+
+```bash
+bash $C package -o /tmp/cur
+# -> /tmp/cur/open-review.sh
+# tell the user: open a terminal in /tmp/cur and run `bash open-review.sh`
+```
+
+The launcher opens the fzf picker over the screened candidates and, once the
+user confirms, finalizes and verifies the corpus in the same run. One
+interaction, done — the agent does scan+screen, the user does the keep/drop.
+
 If you invoke the entry point from a headless context anyway, it refuses to
 pretend: it prints this same staged sequence with your actual paths and exits
 non-zero.
@@ -154,10 +168,26 @@ Two rules follow, and both are load-bearing:
   hits base64 attachments and `tool_result` payloads, producing confident
   garbage hits.
 
-## WSL and Windows
+## Interaction surfaces
 
-The primary setup: the agent loop runs **inside WSL**, and the Windows side is
-where a visible picker terminal can be opened. Two consequences:
+This skill is the product; its interactive UX is defined per environment by
+one question: **can a Windows-side terminal be launched?** The answer decides
+everything else:
+
+| Environment | Interactive picker | No tty available |
+|---|---|---|
+| Windows Git Bash (native) | spawns Windows Terminal running Git Bash | staged pipeline |
+| WSL (Windows desktop reachable) | spawns Windows Terminal running `wsl.exe` | staged pipeline |
+| Pure Linux / servers | none — no unified terminal to launch; if the caller already HAS a tty (the user runs `review --ui fzf` in their own terminal), that works | staged pipeline or the packaged launcher |
+
+"Staged pipeline" is the non-interactive finish: screen → `review --ui tsv` →
+edit → `finalize` (see Pipeline). On a headless run with no user terminal,
+`curate-sessions.sh package` writes a one-click launcher the user can run in
+their own terminal later — that is the interactive UX for pure Linux.
+
+tmux/zellij are never used to launch windows for users; they exist only as an
+undocumented internal test harness for agents driving the TUI
+programmatically.
 
 ### Sessions live on both sides; scan reads the side whose HOME you are in
 
@@ -174,7 +204,7 @@ HOME=/mnt/c/Users/<you> bash $C scan -o /tmp/cur-win --agent both
 (Fine to do from WSL — the format is identical, and `--workspace` matching
 works the same because Windows cwds are normalised to `/` separators.)
 
-### No visible terminal → the picker opens one on the Windows side
+### WSL: no visible terminal → the picker opens one on the Windows side
 
 If the WSL shell has a real terminal, `pick-sessions.sh` just runs. If it does
 not — invoked from a tool call, a CI step, or any non-interactive context — it
@@ -182,10 +212,6 @@ not — invoked from a tool call, a CI step, or any non-interactive context — 
 
 1. `wt.exe -- wsl.exe -d $WSL_DISTRO_NAME` — Windows Terminal (preferred)
 2. `cmd.exe /c start … wsl.exe` — a plain console window
-3. (native Linux desktops only) `x-terminal-emulator`, `alacritty`, `kitty`,
-   `wezterm`, `foot`, `gnome-terminal`, `konsole`, `xterm`
-4. `tmux` — creates the session and tells you how to attach; it never hijacks
-   the calling process, so a headless caller survives to see the staged fallback
 
 A spawn is **requested, not verified**: `wt.exe` exits 0 the moment the spawn
 is delegated, so "requested" can still mean no visible window appeared
@@ -193,9 +219,10 @@ is delegated, so "requested" can still mean no visible window appeared
 staged pipeline alongside the spawn message and exits 0; if no window showed
 up, just run the staged commands it printed.
 
-### Bash running natively on Windows (Git Bash / MSYS)
+### Windows: bash running natively (Git Bash / MSYS)
 
-Supported, but secondary: the whole script runs under MSYS, no WSL involved.
+The whole script runs under MSYS, no WSL involved — this is the native Windows
+interaction surface.
 
 Setup is two packages — MSYS already bundles the rest of the POSIX userland:
 
@@ -203,8 +230,8 @@ Setup is two packages — MSYS already bundles the rest of the POSIX userland:
 scoop install jq ripgrep          # or: winget install jqlang.jq BurntSushi.ripgrep.MSVC
 ```
 
-`tmux` does not exist under MSYS, so it spawns **Windows Terminal running Git
-Bash** instead, which gives the picker a real tty.
+`pick-sessions.sh` with no tty spawns **Windows Terminal running Git Bash**,
+which gives the picker a real tty.
 
 Point the scripts at the Windows-side session trees: `~/.codex` and
 `~/.claude` resolve to `C:\Users\<you>\…`, which hold the same file formats.

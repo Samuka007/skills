@@ -76,6 +76,37 @@ while IFS=$'\t' read -r want path; do path="${path%$'\r'}"
 done < <(jq -r '.[] | "\(.sha256)\t\(.kept_as)"' "$WORK/manifest.json")
 chk "sha mismatches" "$bad" "0"
 
+step "package launcher (bundle member next to the TSVs)"
+pk="$(bash "$C" package -o "$WORK" 2>&1)"; pkrc=$?
+if [[ $pkrc -eq 0 && -x "$WORK/open-review.sh" ]]; then echo "  OK   open-review.sh written, executable"; else echo "  FAIL package rc=$pkrc: ${pk##*$'\n'}"; fail=1; fi
+grep -q "ENGINE=" "$WORK/open-review.sh" && grep -q "review --ui fzf" "$WORK/open-review.sh" && grep -q "finalize" "$WORK/open-review.sh" \
+  && echo "  OK   launcher carries engine path + review + finalize" || { echo "  FAIL launcher content"; fail=1; }
+
+step "package launcher end-to-end (script-driven fzf = user's own terminal)"
+rm -rf "$WORK/lx"; mkdir -p "$WORK/lx"
+bash "$C" scan -o "$WORK/lx" >/dev/null 2>&1
+bash "$C" review --ui tsv -o "$WORK/lx" >/dev/null 2>&1
+awk -F'\t' 'BEGIN{OFS="\t"} NR>1 && ++c<=2 {$1="keep"; $2="launcher"} NR>1 && c>2 {$1="drop"} {print}' "$WORK/lx/decisions.tsv" > "$WORK/lx/d" && mv "$WORK/lx/d" "$WORK/lx/decisions.tsv"
+bash "$C" package -o "$WORK/lx" >/dev/null 2>&1
+ldout="$(bash "$WORK/lx/open-review.sh" < /dev/null 2>&1)"; ldrc=$?
+# headless here: fzf aborts -> launcher exits nonzero (user's real terminal gives the TUI)
+if [[ $ldrc -ne 0 ]]; then echo "  OK   launcher runs and fails honestly without a tty (rc=$ldrc)"; else echo "  FAIL launcher silently succeeded headless?"; fail=1; fi
+
+step "pick headless output carries both escape hatches"
+mkdir -p "$WORK/nx"; bash "$C" scan -o "$WORK/nx" >/dev/null 2>&1
+# Environment-independent invariants: whatever this host is (WSL with wt.exe,
+# Git Bash, pure Linux), a headless pick must ALWAYS end by printing the two
+# escape hatches — the packaged launcher and the staged pipeline. "No
+# opening on pure Linux" is a code property, not an output property, and
+# belongs to code reading, not to a test that would need to fake a whole
+# environment to observe it.
+nh="$(bash "$SKILL/scripts/pick-sessions.sh" -o "$WORK/nx" -y 2>&1)"; nhrc=$?
+if [[ "$nh" == *"Non-interactive (no terminal available to the user either):"* && "$nh" == *"package -o"* ]]; then
+  echo "  OK   headless output carries both escape hatches (rc=$nhrc)"
+else
+  echo "  FAIL fallback escape hatches missing from output (rc=$nhrc)"; fail=1
+fi
+
 printf '\n=====================================\n'
 if [[ $fail -eq 0 ]]; then echo "RESULT: ALL CHECKS PASSED"; else echo "RESULT: FAILURES PRESENT"; fi
 echo "====================================="
