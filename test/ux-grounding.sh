@@ -168,6 +168,41 @@ fi
 tmux send-keys -t "$SESS" Escape; sleep 1
 tmux kill-session -t "$SESS" 2>/dev/null || true
 
+echo "--- A4d. in SEARCH mode SPACE types a space (it must not toggle) ---"
+# The reason `/` exists at all: to type queries containing spaces. Discriminator:
+# after "/" the space must land in the query line, not fire the toggle binding.
+tmux kill-session -t "$SESS" 2>/dev/null || true
+rm -f "$WORK/.chosen.tsv"
+run_picker
+tmux send-keys -t "$SESS" "/"; sleep 0.6
+tmux send-keys -t "$SESS" "a"; sleep 0.4
+tmux send-keys -t "$SESS" " "; sleep 0.6
+tmux send-keys -t "$SESS" "b"; sleep 0.8
+qs="$(dump | grep -E '^> ' | sed -n 1p | sed 's/[[:space:]]*╭.*$//' | sed 's/^> *//')"
+selnow="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
+echo "  query=[${qs:0:24}]  selected=$selnow"
+if [[ "$qs" == "a b" ]]; then
+  ok "SPACE inserted into the query in search mode"
+else
+  no "space did not reach the query (got '${qs:0:24}'); the toggle ate it"
+fi
+
+echo
+echo "--- A4e. ctrl-b returns to browse mode and SPACE marks again ---"
+tmux send-keys -t "$SESS" C-b; sleep 0.7
+after_q="$(dump | grep -E '^> ' | sed -n 1p | sed 's/[[:space:]]*╭.*$//' | sed 's/^> *//')"
+sel_before="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
+tmux send-keys -t "$SESS" Space; sleep 0.7
+sel_after="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
+echo "  after ctrl-b query=[${after_q:0:16}]  sel $sel_before -> $sel_after"
+if [[ -z "$after_q" && "$sel_before" != "$sel_after" ]]; then
+  ok "ctrl-b cleared the query and SPACE marks again"
+else
+  no "ctrl-b did not restore browse mode (query='${after_q:0:16}', sel $sel_before -> $sel_after)"
+fi
+tmux send-keys -t "$SESS" Escape; sleep 1
+tmux kill-session -t "$SESS" 2>/dev/null || true
+
 echo "--- A5. ctrl-a then ENTER takes exactly the agent-kept rows ---"
 # A4's ENTER already ended the picker; start a fresh session for the next pick.
 tmux kill-session -t "$SESS" 2>/dev/null || true

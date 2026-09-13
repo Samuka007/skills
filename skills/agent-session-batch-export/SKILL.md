@@ -281,11 +281,22 @@ already handled in the script; this section is why the handling exists.
     `toggle`. Preview scrolling is key-driven: `shift-↑/↓` is built in, and
     `PgUp/PgDn`, `alt-↑/↓`, `ctrl-o` are bound by the picker.
 20. **A binding on a PRINTABLE key steals that keystroke from the query.**
-    Binding `g:preview-top` made `g` untypeable in the search box (verified:
-    the query stayed empty while the match count did not change). Preview keys
-    must therefore be non-printable. `space` is safe because fzf gives bound
-    keys priority only while search is *disabled*; once `/` enables search,
-    space is an ordinary character again.
+    Binding `g:preview-top` made `g` untypeable in the search box (verified: the
+    query stayed empty and the match count did not move). Preview keys must be
+    non-printable.
+21. **`enable-search` does NOT disable other bindings.** An earlier claim here —
+    that "once `/` enables search, space is an ordinary character again" — was
+    reasoning, never measured, and it is false: `space:toggle` kept firing and
+    ate the space, so a query containing a space was impossible. `unbind(space)`
+    has to be part of the `/` action. Verified with lines `a b` / `ab`: only if
+    the space reaches the query does fzf tokenise and match both.
+22. **Do not bind `esc`.** Stealing it removes the escape hatch; a user who
+    cannot leave the mode is trapped. "Leave search mode" therefore lives on
+    `ctrl-b`, which also `clear-query`s and `rebind(space)`.
+23. **Judge "did fzf abort?" by its exit, not by tmux session liveness.** The
+    shell outlives fzf, so `tmux has-session` reports the session alive either
+    way — this produced a false "ESC is broken" regression during development.
+    Write a marker file after fzf returns instead.
 
 ## Adding a harness
 

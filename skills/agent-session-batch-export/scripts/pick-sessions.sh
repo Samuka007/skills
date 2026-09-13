@@ -260,14 +260,16 @@ else
   echo "   no screening ran; nothing is pre-selected. All $total are listed."
 fi
 cat <<'KEYS'
-   SPACE  mark / unmark the highlighted row
-   ENTER  confirm  (marked rows are kept)        ESC   abort
-   ctrl-a all   ctrl-d none
-   /      start searching  (the list does NOT filter until you press /)
-   shift-↑ / shift-↓   scroll the preview     PgUp/PgDn  preview by page
-   alt-↑ / alt-↓  preview top / bottom   ctrl-o  hide/show the preview
+   BROWSE MODE (default — nothing filters while you type)
+     SPACE  mark / unmark the highlighted row      TAB  same, then move down
+     ENTER  confirm  (marked rows are kept)        ESC  abort
+     ctrl-a all   ctrl-d none      ctrl-o hide/show preview
+     shift-↑/↓ scroll preview   PgUp/PgDn by page   alt-↑/↓ top/bottom
+   SEARCH MODE (press / )
+     SPACE becomes an ordinary space; TAB still marks.
+     ctrl-b  leave search, clear the query, SPACE marks again
    (the preview cannot take focus — fzf has no such concept — so it is
-    scrolled by keys, not by tabbing into it)
+    scrolled by keys, never by tabbing into it)
 ========================================================================
 KEYS
 echo
@@ -305,9 +307,10 @@ chosen="$(fzf --multi --ansi --delimiter='\t' \
     --header="SPACE mark · ENTER confirm · ESC abort · / search · shift-↑/↓ preview
 [$total candidates; $n_keep_sug pre-selected]  columns: agent · cwd · size · events · first-prompt · file · suggested · reason" \
     --bind "load:$sel_seq" \
-    --bind '/:enable-search+unbind(/)' \
+    --bind '/:enable-search+unbind(/)+unbind(space)' \
     --bind 'space:toggle' \
     --bind 'tab:toggle+down' \
+    --bind 'ctrl-b:disable-search+rebind(space)+clear-query' \
     --bind 'ctrl-a:select-all' --bind 'ctrl-d:deselect-all' \
     --bind 'ctrl-o:toggle-preview' \
     --bind 'pgdn:preview-page-down' --bind 'pgup:preview-page-up' \
