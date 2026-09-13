@@ -41,6 +41,13 @@ An item is accepted when a **command** says so, not when an agent says so.
 
 - Each item in `SPEC/README.md` names its acceptance command and records the
   output that proved it.
+- **Anything the user sees through a terminal is accepted by driving a real
+  terminal, on the platform it ships to** — Windows through `zellij`, WSL and
+  Linux through `tmux` or `zellij`. A non-interactive run of the same code is
+  not a substitute, because what the user sees is the thing being asserted.
+  When that run cannot be made, the item is reported as unverified, never as
+  passed. The full rule and the failures that produced it are in
+  `SPEC/README.md` § Decisions.
 - Main runs the **end-to-end path once, on the real entry point**. It does not
   re-run the subagent's unit checks, type checks, or test suites; that work is
   already done and re-doing it buys nothing but context.

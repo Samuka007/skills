@@ -43,8 +43,8 @@ bash test/accept.sh skills/agent-session-batch-export /tmp/work
 echo "--- interactive (real PTY) ---"
 bash test/funnel-e2e.sh                           # funnel --in-place -> pick -> verified
 bash test/ux-grounding.sh .                       # entry-point UX
-bash test/test-fzf-tmux.sh                        # the picker itself
-bash test/test-pick-tmux.sh                       # whole one-command journey
+bash test/test-fzf-tmux.sh skills/agent-session-batch-export /tmp/fzft
+bash test/test-pick-tmux.sh "$PWD"                # whole one-command journey
 bash test/test-outdir-tmux.sh                     # output-directory prompt flow
 echo "--- static ---"
 shellcheck skills/<name>/scripts/*.sh
@@ -52,9 +52,11 @@ ty check skills/trajectory-funnel/scripts/funnel.py
 ruff check skills/trajectory-funnel/scripts/funnel.py
 ```
 
-The interactive tests need a real PTY and skip themselves without one; they are
-the only tests that can see the picker's actual output. See
-[`AGENTS.md`](AGENTS.md) for how work here is accepted.
+The interactive tests need a real PTY (they drive tmux and read the pane back)
+and skip themselves without one; they are the only tests that can see the
+picker's actual output. On Windows the same class of test runs through zellij —
+see [`SPEC/README.md`](SPEC/README.md) § Decisions. [`AGENTS.md`](AGENTS.md) has
+how work here is accepted.
 
 | Skill | Dev notes |
 |---|---|
