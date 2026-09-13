@@ -139,6 +139,17 @@ exactly that: the user asked for an export and got one without ever seeing
 the keep/drop list. An export the user did not approve is not a completed
 task even when every copy verifies byte-identical.
 
+### Escape clause: `--yolo` (explicit opt-out only)
+
+If the user's own words explicitly opt out of review ("直接导出", "不用我看",
+"just export it"), run `pick-sessions.sh --yolo` (or `finalize --yolo`): the
+picker is skipped, the screened `keep` rows are exported (all candidates when
+nothing was screened), and the manifest records `mode=yolo, reviewed=false,
+approved_by=user-opt-out`. Integrity checks are NOT skipped — sha256 + cmp
+still verify every copy. Yolo is legitimate ONLY on explicit wording: never
+infer it from brevity, silence, or a busy-sounding user. Without the user's
+own explicit opt-out, run the normal gate above.
+
 Judge from the prose, not from the metadata row. Column 6 (`first_prompt`) is a
 triage hint and can be blank: codex writes `<environment_context>`, AGENTS.md
 and skills scaffolding as user messages, and those are stripped as scaffolding
@@ -185,6 +196,8 @@ The picker runs this check itself after finalizing and prints
 
 `finalize`:
 - `--from FILE` — read a decisions TSV other than the default
+- `--yolo` — stamp the manifest `mode=yolo, reviewed=false` (no-review runs
+  only; see the gate's escape clause)
 - `--hardlink` — link instead of copy. Read-only analysis only: a downstream
   writer would corrupt the original through the link.
 
@@ -192,7 +205,7 @@ The picker runs this check itself after finalizing and prints
 
 `pick-sessions.sh` accepts `-a/--agent`, `-w/--workspace`, `-t/--topic`,
 `--since`, `-n/--min-lines`, `-o/--out`, `-y/--yes`, `--review-only`,
-`--no-finalize`, `--stay`, `-h`.
+`--yolo`, `--no-finalize`, `--stay`, `-h`.
 
 ## Output directory
 

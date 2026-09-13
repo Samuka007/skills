@@ -49,6 +49,10 @@ MIN_LINES=0
 UI=fzf
 HARDLINK=0
 FROM=""
+# yolo: the USER explicitly opted out of reviewing the selection ("直接导出，
+# 不用我看", "just export it"). It changes the manifest's provenance record —
+# NEVER the integrity checks: sha256 + cmp run identically either way.
+YOLO=0
 
 # Scratch dir for scan and review. It was created only inside the scan block,
 # so `review` (whose default UI is fzf) died at its first $TMP reference with
@@ -86,6 +90,8 @@ review options
 
 finalize options
       --from FILE       decisions TSV to use (default OUT/decisions.tsv)
+      --yolo            record mode=yolo / reviewed=false in the manifest:
+                        ONLY for runs the user explicitly opted out of review
       --hardlink        hardlink instead of copy (read-only analysis only:
                         a downstream writer would corrupt the original)
   -h, --help
@@ -104,6 +110,7 @@ while [[ $# -gt 0 ]]; do
     --resume)       RESUME=1; shift ;;
     --from)         FROM="$2"; shift 2 ;;
     --hardlink)     HARDLINK=1; shift ;;
+    --yolo)         YOLO=1; shift ;;
     -h|--help)      usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -583,6 +590,23 @@ if [[ "$cmd" == finalize ]]; then
   # create up front: a zero-match selection must still yield an empty manifest.
   mtmp="$(mktemp)"; : > "$mtmp"
 
+  # Provenance suffix, merged into every manifest entry below. Empty on the
+  # normal gated path so the manifest is byte-identical to before; yolo stamps
+  # the entries so a no-human-review run can never masquerade as a reviewed
+  # one. Built via jq (`+` merges objects) because the entry is JSON:
+  # printf-ing a raw fragment into the object would hand-craft JSON and break
+  # on the first free-text field containing a quote. jq is probed as a hard
+  # dependency by every caller; `+` on objects is in both jq and jaq.
+  #
+  # MUST be computed BEFORE the loop: the loop body reads it on every row, and
+  # an assignment after the loop is an unbound variable under `set -u` — that
+  # killed every finalize run, yolo and gated alike.
+  yolo_fields=""
+  if [[ $YOLO -eq 1 ]]; then
+    # shellcheck disable=SC2016
+    yolo_fields="$(jq -c -n '{mode:"yolo", reviewed:false, approved_by:"user-opt-out"}')"
+  fi
+
   # size_bytes/first_prompt are fixed TSV columns read to keep positions
   # aligned; they are never used directly (re-emitted verbatim by finalize).
   # The directive must sit on the line immediately before the command.
@@ -626,13 +650,15 @@ if [[ "$cmd" == finalize ]]; then
     # jqd, not jq: every value below is transcript DATA. Under MSYS the plain
     # `jq` would have Git Bash rewrite `cwd`/`source` into Windows paths.
     # shellcheck disable=SC2016
-    printf '%s\n' "$(jqd -n -c \
+    entry="$(jqd -n -c \
       --arg agent "$agent" --arg cwd "$cwd" --arg src "$f" --arg dest "$dest" \
       --arg decision "$decision" --arg reason "$reason" --arg suggested "$suggested" \
       --arg sha "$sha" --argjson size "$(stat_size "$dest")" --argjson lines "$n_lines" \
       '{agent:$agent, cwd:$cwd, source:$src, kept_as:$dest, sha256:$sha,
         bytes:$size, events:$lines, decision:$decision,
-        suggested:$suggested, reason:$reason}')" >> "$mtmp"
+        suggested:$suggested, reason:$reason}')"
+    [[ -n "$yolo_fields" ]] && entry="$(printf '%s' "$entry" | jq -c --argjson y "$yolo_fields" '. + $y')"
+    printf '%s\n' "$entry" >> "$mtmp"
     kept=$((kept + 1))
   done < "$rowsfile"
   rm -f "$rowsfile"
@@ -654,6 +680,10 @@ if [[ "$cmd" == finalize ]]; then
   # contradict it. The gate lives in SKILL.md and in review --ui tsv's
   # output — the agent-delegated path — where it is actionable.
   [[ $HARDLINK -eq 1 ]] && echo "(hardlinked)"
+  if [[ $YOLO -eq 1 ]]; then
+    echo "notice: NO human reviewed the selection (yolo — the user explicitly"
+    echo "opted out of review; the manifest records mode=yolo, reviewed=false)."
+  fi
   echo "manifest: $OUTDIR/manifest.json"
   echo
   # The pair list goes to a FILE and is read with a CR strip: `jq -r` emits

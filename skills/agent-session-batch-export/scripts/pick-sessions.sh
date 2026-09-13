@@ -37,6 +37,7 @@ OUTDIR=""
 REVIEW_ONLY=0
 IN_TERMINAL=0
 NO_FINALIZE=0
+YOLO=0
 YES=0
 ASK_OUT=1
 STAY=0
@@ -58,6 +59,9 @@ Options:
                        (confirmed interactively; -y to skip the prompt)
   -y, --yes            do not prompt for the output directory
       --review-only    skip the scan; re-pick an existing OUTDIR
+      --yolo           NO picker: keep the screening's suggested=keep rows
+                       (or ALL candidates when unscreened). Only for runs
+                       where the user explicitly opted out of review.
       --no-finalize    pick only; do not materialize the kept corpus
       --in-terminal    internal: already running inside the spawned window
       --stay           internal: pause at the end so the window stays readable
@@ -75,6 +79,7 @@ while [[ $# -gt 0 ]]; do
     -o|--out)        OUTDIR="$2"; shift 2 ;;
     -y|--yes)        YES=1; shift ;;
     --review-only)   REVIEW_ONLY=1; shift ;;
+    --yolo)          YOLO=1; shift ;;
     --no-finalize)   NO_FINALIZE=1; shift ;;
     --in-terminal)   IN_TERMINAL=1; shift ;;
     --stay)          STAY=1; shift ;;
@@ -174,6 +179,136 @@ fi
 total="$(awk -F'\t' 'NR>1' "$CAND" | wc -l | tr -d ' ')"
 if [[ "$total" -eq 0 ]]; then
   echo "no candidates matched — nothing to pick." >&2
+  exit 0
+fi
+
+# ------------------------------------------------- shared: rows + finalization
+# Both the interactive picker and --yolo need the same two artifacts, so both
+# go through the same builders — otherwise yolo drifts from the reviewed path
+# (two code paths for one operation is exactly what issue #2 rejected for
+# finalize).
+#
+# DEFINED HERE, above the --yolo branch, because bash resolves a function only
+# after its definition has been read: defined further down the file they are
+# not callable from above it. The first yolo run died with "build_rows:
+# command not found", wrote no corpus and no manifest, and still exited 0.
+#
+# build_rows: candidates columns + suggested + reason, resolved BY HEADER NAME
+# and joined on session_file (see the comment below the SCREEN if for why
+# positional reads are wrong here). Written to .rows.tsv with the SAME shape
+# the fzf path consumes.
+build_rows() {
+  SCREEN="$OUTDIR_ABS/screen.tsv"
+  if [[ -f "$SCREEN" ]]; then
+  awk -F'\t' 'BEGIN{OFS="\t"}
+    NR==FNR {
+      { sub(/\r$/, "") }
+      if (FNR==1) { for (i=1;i<=NF;i++) { if ($i=="suggested") si=i; if ($i=="reason") ri=i; if ($i=="session_file") fi=i }
+                    if (!si) { print "screen.tsv has no `suggested` column" > "/dev/stderr"; exit 2 }
+                    next }
+      # reason is free text: a tab in it shifts every later column downstream
+      # (a kept session then silently vanished at finalize). Same sanitizing
+      # the finalize reader applies on its side.
+      sug_txt = si ? $(si) : ""; why_txt = ri ? $(ri) : ""
+      gsub(/[\t\r\n]/, " ", sug_txt); gsub(/[\t\r\n]/, " ", why_txt)
+      k = fi ? $fi : ""
+      sug[k]=sug_txt; why[k]=why_txt
+      next
+    }
+    { sub(/\r$/, "") }
+    FNR==1 { fi=0; for (i=1;i<=NF;i++) if ($i=="session_file") fi=i; next }
+    # Rebuild the fields explicitly rather than printing $0 with two appends:
+    # $0 is the raw line and appending to it re-joins with OFS, which does not
+    # reproduce a row whose fields were split on tabs.
+    { f = fi ? $fi : $NF
+      for (i=1;i<=NF;i++) printf "%s\t", $i
+      printf "%s\t%s\n", (f in sug ? sug[f] : ""), (f in why ? why[f] : "") }
+  ' "$SCREEN" "$CAND" > "$OUTDIR_ABS/.rows.tsv"
+  else
+    awk -F'\t' 'BEGIN{OFS="\t"} NR>1{print $0,"",""}' "$CAND" > "$OUTDIR_ABS/.rows.tsv"
+  fi
+}
+
+# finalize_and_verify: materialize via the engine (passing --yolo through so
+# the manifest records mode=yolo / reviewed=false / approved_by=user-opt-out),
+# then cmp every copy against its source in the same run. The yolo rule notice
+# ("which selection rule applied") is printed BEFORE finalize so the user sees
+# what was selected without reading the manifest.
+finalize_and_verify() {
+  local yargs=""
+  [[ $YOLO -eq 1 ]] && yargs=" --yolo"
+  # A failed finalize must stop the run HERE. Carrying on would read a missing
+  # or stale manifest as zero pairs to compare and print "verified: 0/0 copies
+  # byte-identical" — a clean-looking verification of a corpus that was never
+  # written. $yargs is either empty or " --yolo"; word splitting is intended
+  # and it is never user input (an array would be buggy under `set -u` on
+  # bash 3.2, where "${a[@]}" on an empty array is an unbound variable).
+  # shellcheck disable=SC2086
+  bash "$ENGINE" finalize -o "$OUTDIR_ABS" $yargs || exit 1
+
+  # Prove the copies before handing them on, in the same run.
+  local bad=0 n=0
+  # jq -r emits CRLF on Windows, so BOTH fields need the CR stripped — a
+  # trailing CR on either path makes cmp exit 2 ("No such file"), which is
+  # indistinguishable from a corrupt copy. The pair list goes through a file,
+  # never a process substitution, because the latter blocks forever if the job
+  # is backgrounded.
+  jq -r '.[] | "\(.source)\t\(.kept_as)"' "$OUTDIR_ABS/manifest.json" > "$OUTDIR_ABS/.pairs.tsv"
+  while IFS=$'\t' read -r s d; do
+    s="${s%$'\r'}"; d="${d%$'\r'}"; n=$((n+1))
+    cmp -s "$s" "$d" || { bad=$((bad+1)); echo "MISMATCH: $s" >&2; }
+  done < "$OUTDIR_ABS/.pairs.tsv"
+  echo
+  if [[ $bad -eq 0 ]]; then
+    echo "verified: $n/$n copies byte-identical to their originals"
+  else
+    echo "WARNING: $bad of $n copies differ — do not use this corpus" >&2
+    exit 1
+  fi
+  echo "corpus:  $OUTDIR_ABS/keep"
+  echo "manifest: $OUTDIR_ABS/manifest.json"
+}
+
+# ------------------------------------------------------------- yolo: no picker
+# The USER explicitly opted out of reviewing the selection (SKILL.md: only an
+# explicit opt-out in the user's own words legitimizes this; never inferred
+# from silence or brevity). Skip the picker AND the terminal spawn entirely
+# and go straight to finalize.
+#
+# Selection rule, printed either way so the user can see what was chosen
+# without reading the manifest:
+#   * screen.tsv present with suggested=keep rows -> those rows. `suggested`
+#     already carries the funnel/screening's decision if one ran.
+#   * screen.tsv absent or with no keep rows -> ALL candidates. Nothing was
+#     screened, so the honest reading of "export it" is "export what the scan
+#     found".
+if [[ $YOLO -eq 1 ]]; then
+  # .rows.tsv (9 cols, no header): candidates(7) + suggested + reason, from
+  # the SAME header-resolving join the interactive picker uses.
+  # A failed join (screen.tsv without a `suggested` column) must abort: the
+  # rule below would otherwise read the missing rows as "nothing was screened"
+  # and export every candidate — a silent misreading of the screening.
+  build_rows || { echo "yolo: could not build the pick rows (see above)" >&2; exit 1; }
+  n_screen_keep="$(awk -F'\t' '$8 == "keep"' "$OUTDIR_ABS/.rows.tsv" | wc -l | tr -d ' ')"
+  if [[ "$n_screen_keep" -gt 0 ]]; then
+    echo "== yolo rule: suggested=keep rows from screen.tsv — keeping $n_screen_keep of $total — no picker =="
+  else
+    echo "== yolo rule: no screened keep rows (unscreened or all-drop) — keeping ALL $total candidates — no picker =="
+  fi
+  {
+    printf 'decision\treason\tsuggested\tagent\tcwd\tmtime\tsize_bytes\tn_lines\tfirst_prompt\tsession_file\n'
+    # .rows.tsv layout: 1 agent 2 cwd 3 mtime 4 size 5 n_lines 6 first_prompt
+    # 7 session_file 8 suggested 9 reason -> decisions.tsv column order.
+    awk -F'\t' -v sel="$n_screen_keep" 'BEGIN{OFS="\t"}
+      sel > 0 && $8 != "keep" { next }
+      { print "keep", $9, $8, $1, $2, $3, $4, $5, $6, $7 }
+    ' "$OUTDIR_ABS/.rows.tsv"
+  } > "$OUTDIR_ABS/decisions.tsv"
+  if [[ $NO_FINALIZE -eq 1 ]]; then
+    echo "decisions: $OUTDIR_ABS/decisions.tsv"
+    exit 0
+  fi
+  finalize_and_verify
   exit 0
 fi
 
@@ -369,9 +504,9 @@ if ! command -v fzf >/dev/null 2>&1; then
 fi
 
 # -------------------------------------------------------------- stage 2+3: pick
-# If the agent (or a previous run) left screen.tsv with suggested/reason, fold
-# those into the fzf rows so the preview can show the recommendation.
-SCREEN="$OUTDIR_ABS/screen.tsv"
+# If the agent (or a previous run) left screen.tsv with suggested/reason, it is
+# folded into the fzf rows (build_rows above) so the preview shows the
+# recommendation.
 PREVIEW="$OUTDIR_ABS/.preview.sh"
 cat > "$PREVIEW" <<'PEOF'
 #!/usr/bin/env bash
@@ -436,53 +571,11 @@ esac | awk '{ sub(/^[ \t\r]+/,"") }
 PEOF
 chmod +x "$PREVIEW"
 
-# Build the fzf row set: candidates columns + suggested + reason.
-#
-# screen.tsv is "candidates.tsv plus two columns", but the header shape varies in
-# practice: a maintainer's test writes `decision reason suggested …` (10 cols) and
-# a hand-written screening `session_file suggested reason` (3 cols). Reading by
-# POSITION therefore reads the wrong field for at least one of them — that is
-# what swapped suggested/reason, zeroed the pre-selection count, and made the
-# preview print the reason as the suggestion.
-#
-# So: resolve the two columns by HEADER NAME, and join on `session_file` rather
-# than by line order — `paste` would attach a suggestion to whichever candidate
-# happened to sit at the same line, silently mislabelling the whole set if the
-# screening were sorted differently.
-if [[ -f "$SCREEN" ]]; then
-  # Header-name resolution on BOTH sides (the candidates side used to take
-  # $NF, a positional read that silently keys the join wrong if the candidate
-  # shape ever grows a trailing column). CRLF strip on every input line: a
-  # screen.tsv saved CRLF by a Windows-side screening rode its CR onto the
-  # session_file value, the /\.jsonl$/ key regex never matched, and the whole
-  # screening came through as empty suggestions.
-  awk -F'\t' 'BEGIN{OFS="\t"}
-    NR==FNR {
-      { sub(/\r$/, "") }
-      if (FNR==1) { for (i=1;i<=NF;i++) { if ($i=="suggested") si=i; if ($i=="reason") ri=i; if ($i=="session_file") fi=i }
-                    if (!si) { print "screen.tsv has no `suggested` column" > "/dev/stderr"; exit 2 }
-                    next }
-      # reason is free text: a tab in it shifts every later column downstream
-      # (a kept session then silently vanished at finalize). Same sanitizing
-      # the finalize reader applies on its side.
-      sug_txt = si ? $(si) : ""; why_txt = ri ? $(ri) : ""
-      gsub(/[\t\r\n]/, " ", sug_txt); gsub(/[\t\r\n]/, " ", why_txt)
-      k = fi ? $fi : ""
-      sug[k]=sug_txt; why[k]=why_txt
-      next
-    }
-    { sub(/\r$/, "") }
-    FNR==1 { fi=0; for (i=1;i<=NF;i++) if ($i=="session_file") fi=i; next }
-    # Rebuild the fields explicitly rather than printing $0 with two appends:
-    # $0 is the raw line and appending to it re-joins with OFS, which does not
-    # reproduce a row whose fields were split on tabs.
-    { f = fi ? $fi : $NF
-      for (i=1;i<=NF;i++) printf "%s\t", $i
-      printf "%s\t%s\n", (f in sug ? sug[f] : ""), (f in why ? why[f] : "") }
-  ' "$SCREEN" "$CAND" > "$OUTDIR_ABS/.rows.tsv"
-else
-  awk -F'\t' 'BEGIN{OFS="\t"} NR>1{print $0,"",""}' "$CAND" > "$OUTDIR_ABS/.rows.tsv"
-fi
+# Build the fzf row set: candidates columns + suggested + reason. The join is
+# resolved BY HEADER NAME, on session_file (see build_rows): reading by
+# POSITION was the bug that swapped suggested/reason, zeroed the pre-selection
+# count, and made the preview print the reason as the suggestion.
+build_rows
 
 # fzf cannot pre-select by predicate, and pre-selecting EVERYTHING (the earlier
 # behaviour) silently re-enabled rows the screening had rejected — the user saw
@@ -634,25 +727,4 @@ if [[ $NO_FINALIZE -eq 1 ]]; then
   exit 0
 fi
 
-bash "$ENGINE" finalize -o "$OUTDIR_ABS"
-
-# Prove the copies before handing them on, in the same run.
-bad=0; n=0
-# jq -r emits CRLF on Windows, so BOTH fields need the CR stripped — a trailing
-# CR on either path makes cmp exit 2 ("No such file"), which is indistinguishable
-# from a corrupt copy. The pair list goes through a file, never a process
-# substitution, because the latter blocks forever if the job is backgrounded.
-jq -r '.[] | "\(.source)\t\(.kept_as)"' "$OUTDIR_ABS/manifest.json" > "$OUTDIR_ABS/.pairs.tsv"
-while IFS=$'\t' read -r s d; do
-  s="${s%$'\r'}"; d="${d%$'\r'}"; n=$((n+1))
-  cmp -s "$s" "$d" || { bad=$((bad+1)); echo "MISMATCH: $s" >&2; }
-done < "$OUTDIR_ABS/.pairs.tsv"
-echo
-if [[ $bad -eq 0 ]]; then
-  echo "verified: $n/$n copies byte-identical to their originals"
-else
-  echo "WARNING: $bad of $n copies differ — do not use this corpus" >&2
-  exit 1
-fi
-echo "corpus:  $OUTDIR_ABS/keep"
-echo "manifest: $OUTDIR_ABS/manifest.json"
+finalize_and_verify
