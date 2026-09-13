@@ -574,9 +574,11 @@ def main() -> int:
             cand.rename(full)
         else:
             cand.unlink()  # re-tune rerun: archive already holds the full set
-        with open(cand, "w", encoding="utf-8") as fh:
+        cand_tmp = outdir / ".candidates.tsv.tmp"
+        with open(cand_tmp, "w", encoding="utf-8") as fh:
             fh.write("\t".join(header) + "\n")
             fh.writelines("\t".join(r[h] for h in header) + "\n" for r in alive)
+        cand_tmp.rename(cand)
         # Survivor rows verbatim + two empty suggestion columns — the shape
         # scan's scaffold emits (`print $0, "", ""`). The join keys on
         # session_file, so a row of all-empty cells would match nothing.
