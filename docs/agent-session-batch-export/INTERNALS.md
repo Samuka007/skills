@@ -241,6 +241,19 @@ These apply to the engine (`scripts/curate-sessions.sh`).
     in one run). Telling an agent to "print the command the user should run"
     produced stale hand-transcribed paths; a generated file in the OUTDIR
     bundle cannot drift from the data it operates on.
+45. **Two entry points on Windows, because the intent is not inferable.**
+    The user's target sessions (Windows side vs Linux side) and the shell an
+    agent's `bash` resolves to (Git Bash vs `system32\bash.exe` = WSL bash)
+    are independent. No check inside the .sh can distinguish "WSL bash,
+    user wants Linux-side sessions" (legitimate) from "WSL bash, user
+    actually wanted Windows-side sessions" (wrong interpreter AND wrong
+    tree) — shell identity does not encode intent. Hence the .ps1 wrappers:
+    invoking `pick-sessions.ps1` IS the declaration "Windows side", and the
+    wrapper pins Git Bash (Program Files → scoop shims → PATH minus
+    system32), failing with `winget install Git.Git` when absent. Running a
+    bare .sh under WSL bash remains the Linux-side path, not an error.
+    Verified: PS 5.1 param pass-through with quoted paths, exit-code
+    propagation, WSL-bash exclusion on the PATH probe.
 
 ## Verification coverage
 

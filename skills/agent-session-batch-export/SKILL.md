@@ -4,7 +4,7 @@ description: "Curate claude_code/codex session transcripts into a corpus of RAW 
 license: MIT
 compatibility: "Requires bash 3.2+ with a POSIX userland (awk, sed, find, stat, cmp, sort, cut, tr, mktemp, sha256). Windows Git Bash bundles all of that; add jq and ripgrep (rg) via scoop or winget. Optional: fzf for the interactive review step. Reads ~/.claude/projects and ~/.codex/sessions. Runs on Linux, macOS, and Windows Git Bash."
 metadata:
-  verified-platforms: "GNU/Linux; Windows Git Bash (MINGW64) with scoop jq+ripgrep"
+  verified-platforms: "GNU/Linux; Windows (Git Bash via .ps1 wrappers) with scoop jq+ripgrep"
 ---
 
 # Curate agent sessions into trajectory material
@@ -20,6 +20,10 @@ so downstream analysis reads the real trajectory (every tool call and result),
 not a lossy view of it.
 
 ## Pipeline
+
+On Windows use `scripts\pick-sessions.ps1` / `scripts\curate-sessions.ps1`
+(same arguments) — see Interaction surfaces for why. The `.sh` examples below
+are the Linux/WSL/macOS spelling.
 
 Pick the entry point by what can see a terminal, not by preference:
 
@@ -222,7 +226,17 @@ up, just run the staged commands it printed.
 ### Windows: bash running natively (Git Bash / MSYS)
 
 The whole script runs under MSYS, no WSL involved — this is the native Windows
-interaction surface.
+interaction surface. **On Windows, invoke the `.ps1` wrappers, not `bash
+xxx.sh`:** `scripts\pick-sessions.ps1` / `scripts\curate-sessions.ps1` locate
+Git Bash and re-exec the real script with it, so the caller's shell identity
+(cmd, PowerShell, an agent whose `bash` resolves to WSL bash) is irrelevant.
+Two entries, two intents: the `.ps1` wrappers mean "the sessions I want are
+on the Windows side"; running the `.sh` inside WSL means Linux-side sessions.
+No script can infer that intent from its environment, so do not pick the
+entry point by whichever shell happens to be in PATH.
+
+The wrappers fail with an install instruction when Git Bash is absent
+(`winget install Git.Git`).
 
 Setup is two packages — MSYS already bundles the rest of the POSIX userland:
 
