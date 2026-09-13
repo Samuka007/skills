@@ -260,28 +260,30 @@ else
   echo "   no screening ran; nothing is pre-selected. All $total are listed."
 fi
 cat <<'KEYS'
-   BROWSE MODE (default — nothing filters while you type)
-     SPACE  mark / unmark the highlighted row      TAB  same, then move down
-     ENTER  confirm  (marked rows are kept)        ESC  abort
-     ctrl-a all   ctrl-d none      ctrl-o hide/show preview
-     shift-↑/↓ scroll preview   PgUp/PgDn by page   alt-↑/↓ top/bottom
-   SEARCH MODE (press / )
-     SPACE becomes an ordinary space; TAB still marks.
-     ctrl-b  leave search, clear the query, SPACE marks again
+   SPACE  mark / unmark the highlighted row      TAB  same, then move down
+   ENTER  confirm  (marked rows are kept)        ESC  abort
+   ctrl-a all   ctrl-d none      ctrl-o hide/show preview
+   shift-↑/↓ scroll preview   PgUp/PgDn by page   alt-↑/↓ top/bottom
    (the preview cannot take focus — fzf has no such concept — so it is
     scrolled by keys, never by tabbing into it)
 ========================================================================
 KEYS
 echo
 
-# --disabled + `/` to enable search: by default every keystroke would filter the
-# list, which fights with using letters as list-navigation muscle memory and
-# hides rows the moment you mistype. Search becomes an explicit mode instead.
-# Verified: with --disabled the list stays 15/15 while typing; `/` then "ccc"
-# narrows it to the matching subset.
+# SPACE always marks; there is no search mode to leave.
+#
+# A `/`-to-search mode was tried and removed. Making search modal forces a
+# choice: while search is on, SPACE must type a space, so it cannot also mark.
+# That escape hatch (a key to leave search, plus having to remember which mode
+# you are in) turned out to be worse than the problem it solved. Marking is the
+# primary action here and it now always behaves the same way.
+#
+# Consequence, stated plainly: typing goes straight into the query and filters
+# immediately, so a query cannot contain a space. Everything before the first
+# space still works normally.
 #
 # SPACE toggles: TAB is the fzf default but space is what a checklist UI trains
-# people to press. TAB is left bound too, since some people reach for it.
+# people to press. TAB is bound too (plus a nudge down), since some reach for it.
 #
 # No --with-nth: it transforms the fields AND the fields fzf writes back on
 # selection, which silently mangled the session paths (only rows whose shifted
@@ -299,18 +301,15 @@ echo
 set -o pipefail
 chosen="$(fzf --multi --ansi --delimiter='\t' \
     --layout=reverse \
-    --disabled \
     --nth=5,2 \
     --no-sort \
     --preview "$PREVIEW {}" \
     --preview-window=right:60%:wrap \
-    --header="SPACE mark · ENTER confirm · ESC abort · / search · shift-↑/↓ preview
+    --header="SPACE mark · ENTER confirm · ESC abort · shift-↑/↓ preview
 [$total candidates; $n_keep_sug pre-selected]  columns: agent · cwd · size · events · first-prompt · file · suggested · reason" \
     --bind "load:$sel_seq" \
-    --bind '/:enable-search+unbind(/)+unbind(space)' \
     --bind 'space:toggle' \
     --bind 'tab:toggle+down' \
-    --bind 'ctrl-b:disable-search+rebind(space)+clear-query' \
     --bind 'ctrl-a:select-all' --bind 'ctrl-d:deselect-all' \
     --bind 'ctrl-o:toggle-preview' \
     --bind 'pgdn:preview-page-down' --bind 'pgup:preview-page-up' \

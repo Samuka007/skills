@@ -284,19 +284,26 @@ already handled in the script; this section is why the handling exists.
     Binding `g:preview-top` made `g` untypeable in the search box (verified: the
     query stayed empty and the match count did not move). Preview keys must be
     non-printable.
-21. **`enable-search` does NOT disable other bindings.** An earlier claim here —
-    that "once `/` enables search, space is an ordinary character again" — was
-    reasoning, never measured, and it is false: `space:toggle` kept firing and
-    ate the space, so a query containing a space was impossible. `unbind(space)`
-    has to be part of the `/` action. Verified with lines `a b` / `ab`: only if
-    the space reaches the query does fzf tokenise and match both.
+21. **`enable-search` does NOT disable other bindings.** A claim once written
+    here — that "once `/` enables search, space becomes an ordinary character" —
+    was reasoning, never measured, and is false: `space:toggle` kept firing and
+    ate the space. `unbind(space)` had to be part of the `/` action.
 22. **Do not bind `esc`.** Stealing it removes the escape hatch; a user who
-    cannot leave the mode is trapped. "Leave search mode" therefore lives on
-    `ctrl-b`, which also `clear-query`s and `rebind(space)`.
+    cannot leave the mode is trapped.
 23. **Judge "did fzf abort?" by its exit, not by tmux session liveness.** The
-    shell outlives fzf, so `tmux has-session` reports the session alive either
-    way — this produced a false "ESC is broken" regression during development.
-    Write a marker file after fzf returns instead.
+    shell outlives fzf, so `tmux has-session` reports alive either way — this
+    produced a false "ESC is broken" regression during development. Write a
+    marker file after fzf returns.
+24. **A modal `/`-search mode was tried and REMOVED.** It forces a trade: while
+    search is on, SPACE must type a space, so it cannot mark; and the user has
+    to remember which mode they are in and how to leave it (`ctrl-b`, since ESC
+    must stay as abort). Marking is the primary action, so it now always behaves
+    identically. Accepted cost: **a query cannot contain a space**, because
+    typing filters immediately.
+25. **`--disabled` still accumulates typed characters into the query.** Pressing
+    `/` then filtered on whatever had been typed beforehand (`al` -> 1/3 while
+    `--disabled` had shown 3/3). Any future modal design must add `clear-query`
+    to the enabling binding.
 
 ## Adding a harness
 

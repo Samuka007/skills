@@ -136,69 +136,33 @@ tmux send-keys -t "$SESS" Escape; sleep 1
 tmux kill-session -t "$SESS" 2>/dev/null || true
 
 echo
-echo "--- A4c. typing does NOT filter until / is pressed ---"
-# Do NOT assert on a literal search term: the candidate set differs per run and
-# the screening's cwds change, so "wanwei matches 4" is a false invariant. What
-# IS invariant: with search disabled typing changes nothing, and after / the
-# query line accepts input and the match count can change.
-rm -f "$WORK/.chosen.tsv"
-run_picker
-before="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
-tmux send-keys -t "$SESS" "zzq"; sleep 1
-after="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
-echo "  typing 'zzq' with search disabled: before=$before after=$after"
-if [[ "$before" == "$after" ]]; then
-  ok "typing did not filter while search is disabled (still $after)"
-else
-  no "typing filtered the list without /: $before -> $after"
-fi
-
-tmux send-keys -t "$SESS" C-u; sleep 0.3
-tmux send-keys -t "$SESS" "/"; sleep 0.6
-tmux send-keys -t "$SESS" "codex"; sleep 1.2
-qs="$(dump | grep -E '^> ' | sed -n 1p)"
-filt="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
-echo "  after / then 'codex': query=[${qs:0:20}] match=$filt"
-# the query line must have captured the text (proves / entered search mode)
-if [[ "$qs" == *codex* ]]; then
-  ok "/ entered search and the query captured the text"
-else
-  no "/ did not capture input; query line was: ${qs:0:40}"
-fi
-tmux send-keys -t "$SESS" Escape; sleep 1
-tmux kill-session -t "$SESS" 2>/dev/null || true
-
-echo "--- A4d. in SEARCH mode SPACE types a space (it must not toggle) ---"
-# The reason `/` exists at all: to type queries containing spaces. Discriminator:
-# after "/" the space must land in the query line, not fire the toggle binding.
+echo "--- A4c. SPACE marks, and typing filters immediately (no search mode) ---"
+# The `/`-to-search mode was removed: SPACE must mark, always, and a modal
+# search cannot coexist with that. So the invariant is the plain one — typing
+# filters, SPACE still marks.
 tmux kill-session -t "$SESS" 2>/dev/null || true
 rm -f "$WORK/.chosen.tsv"
 run_picker
-tmux send-keys -t "$SESS" "/"; sleep 0.6
-tmux send-keys -t "$SESS" "a"; sleep 0.4
-tmux send-keys -t "$SESS" " "; sleep 0.6
-tmux send-keys -t "$SESS" "b"; sleep 0.8
-qs="$(dump | grep -E '^> ' | sed -n 1p | sed 's/[[:space:]]*╭.*$//' | sed 's/^> *//')"
-selnow="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
-echo "  query=[${qs:0:24}]  selected=$selnow"
-if [[ "$qs" == "a b" ]]; then
-  ok "SPACE inserted into the query in search mode"
-else
-  no "space did not reach the query (got '${qs:0:24}'); the toggle ate it"
-fi
-
-echo
-echo "--- A4e. ctrl-b returns to browse mode and SPACE marks again ---"
-tmux send-keys -t "$SESS" C-b; sleep 0.7
-after_q="$(dump | grep -E '^> ' | sed -n 1p | sed 's/[[:space:]]*╭.*$//' | sed 's/^> *//')"
-sel_before="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
 tmux send-keys -t "$SESS" Space; sleep 0.7
-sel_after="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
-echo "  after ctrl-b query=[${after_q:0:16}]  sel $sel_before -> $sel_after"
-if [[ -z "$after_q" && "$sel_before" != "$sel_after" ]]; then
-  ok "ctrl-b cleared the query and SPACE marks again"
+sel_sp="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
+echo "  SPACE from browse: selected=$sel_sp"
+# fresh session => the 3 screening picks are pre-selected again, so one SPACE
+# on the top (already-marked) row UNMARKS it: 3 -> 2.
+if [[ "$sel_sp" == "(2)" ]]; then
+  ok "SPACE toggled the highlighted row (3 -> 2)"
 else
-  no "ctrl-b did not restore browse mode (query='${after_q:0:16}', sel $sel_before -> $sel_after)"
+  no "SPACE did not toggle: expected (2), got $sel_sp"
+fi
+
+before="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
+tmux send-keys -t "$SESS" "codex"; sleep 1
+after="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
+qs="$(dump | grep -E '^> ' | sed -n 1p | sed 's/[[:space:]]*╭.*$//' | sed 's/^> *//')"
+echo "  typing 'codex': match $before -> $after   query=[${qs:0:20}]"
+if [[ "$before" != "$after" ]]; then
+  ok "typing filters immediately ($after)"
+else
+  no "typing did not filter: still $after"
 fi
 tmux send-keys -t "$SESS" Escape; sleep 1
 tmux kill-session -t "$SESS" 2>/dev/null || true
