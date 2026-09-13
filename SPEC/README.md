@@ -45,3 +45,17 @@ at from here.
   different claim — merging the two makes the column unusable as a record of
   which is which. The convenience the pre-fill would buy is one keystroke
   (`ctrl-a` selects all rows in the picker, then ENTER).
+
+## Real-machine acceptance (Windows Git Bash)
+
+Run against the copy installed by `npx skills add` into
+`C:\Users\Samuka007\.agents\skills\agent-session-batch-export`, driven by the
+Windows Git Bash (`C:\Program Files\Git\bin\bash.exe`) rather than WSL — that is
+the environment the skill's Windows users have, and the one where MSYS argument
+rewriting and CRLF hazards live.
+
+Observed: yolo run exits 0 with the rule line `suggested=keep rows from
+screen.tsv — keeping 2 of 3 — no picker`; `verified: 2/2 copies byte-identical`;
+every manifest entry carries `mode=yolo`; the gated `finalize` run adds none of
+the three provenance keys. Scratch fixtures lived under
+`C:\Users\Samuka007\tmp-yolo-win` and were removed afterwards.
