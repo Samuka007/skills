@@ -178,10 +178,18 @@ spawn_terminal() {
     # corrupting wt.exe's own flags: `-d C:\Users\...` arrived mangled and wt ran
     # nothing at all (exit 0, no window). Verified: with MSYS_NO_PATHCONV=1 the
     # identical invocation works. Same class as trap 7; this call site lacked it.
-    # Only -d needs converting: bash accepts the /c/... form of $SELF as-is.
+    #
+    # bash.exe must be given as a WINDOWS ABSOLUTE PATH. A bare `bash.exe` is
+    # not resolvable by wt.exe, because Git's bin directory is on the MSYS PATH
+    # but NOT on the Windows one — so the window opened and the command never
+    # ran. (The WSL branch below gets away with `wsl.exe` purely because that
+    # lives in system32, which is on the Windows PATH.) Only -d needs the
+    # path-conversion guard; inside the -lc string $SELF stays a /c/... path,
+    # which the child MSYS bash opens happily.
+    local wbash; wbash="$(cygpath -w "$BASH" 2>/dev/null || cygpath -w /usr/bin/bash 2>/dev/null || printf 'bash.exe')"
     MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
       wt.exe -d "$(cygpath -w "$OUTDIR_ABS" 2>/dev/null || printf '%s' "$OUTDIR_ABS")" \
-      bash.exe -lc "bash $cmd" >/dev/null 2>&1 && return 0
+      "$wbash" -lc "bash $cmd" >/dev/null 2>&1 && return 0
   fi
 
   # ── WSL ───────────────────────────────────────────────────────────────────
