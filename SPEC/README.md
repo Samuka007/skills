@@ -18,6 +18,7 @@ at from here.
 | 2 | yolo mode (no-review export on explicit opt-out) | **in progress** | — |
 | 3 | READMEs for both skills | **done** | commit `f027a36`; accepted (read end-to-end against SKILL.md and funnel.py, synthetic-data smoke reproduces the documented 5→1 funnel table) |
 | 4 | recorded select+export demo in README | **in progress** | DemoRecorder running |
+| 5 | SKILL.md: funnel mention + yolo escape clause | **blocked on #2** | depends on #2's final wording; lane: docs |
 
 ## Decisions and constraints (apply to all future items)
 
