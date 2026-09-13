@@ -266,6 +266,102 @@ These apply to the engine (`scripts/curate-sessions.sh`).
     check (tab-in-field rows are named and rejected, never silently
     re-joined) and defaults `decision` to `suggested`. A contract the
     pipeline generates itself cannot drift from what the pipeline reads.
+47. **An opt-out from review is recorded in the artifact, not merely honored
+    in the control flow.** The hand-off gate used to be the only path, so an
+    agent whose user said "直接导出，不用我看" could either break the gate or
+    refuse a legitimate request. `--yolo` (a flag on `pick-sessions.sh` and
+    on the engine's `finalize` command) is the sanctioned opt-out: per
+    invocation only, never inferred from silence or brevity. Because the
+    gate's whole value is provenance — a human looked at this selection — a
+    manifest produced without review must say so: `finalize --yolo` merges
+    `mode=yolo`, `reviewed=false` and `approved_by=user-opt-out` into EVERY
+    entry and prints a no-review notice. Two consequences are deliberate:
+    - **The gated path stays byte-identical.** The suffix is built only when
+      the flag is present and is never merged otherwise, so a gated manifest
+      has exactly the keys it had. No consumer has to learn a new key shape
+      for a mode it is not in.
+    - **yolo never weakens the integrity checks.** sha256 and `cmp` gate the
+      result in both modes; the flag changes the record, not the
+      verification. The picker's yolo path skips the picker and the terminal
+      spawn only: it selects the screening's `suggested=keep` rows, or ALL
+      candidates when screen.tsv has no keep rows (unscreened, or a fresh
+      scan's empty scaffold), and prints which of the two rules applied so
+      the selection need not be read back out of the manifest.
+48. **Textual order is semantics: a called function must already be defined,
+    and a read variable must already be assigned.** Both blocking defects in
+    the yolo work were of that shape, and neither was visible in the diff —
+    they surfaced only by running the real scripts end to end
+    (`test/yolo-e2e.sh`, whose fzf and tmux shims shout if a yolo run
+    reaches either).
+    - `pick-sessions.sh` moved `build_rows`/`finalize_and_verify` out of the
+      interactive tail so both paths share them, but first placed them BELOW
+      the `--yolo` branch that calls them. bash resolves a function only
+      after its definition has been read, so the first yolo run printed
+      "command not found", wrote no corpus and no manifest, and still exited
+      0 — a success signal with nothing behind it. The two builders are one
+      shared pair on purpose: a yolo copy of the interactive path would
+      drift from it.
+    - `curate-sessions.sh` read `yolo_fields` inside the finalize loop but
+      assigned it after the loop, so under `set -u` every finalize run died
+      with "yolo_fields: unbound variable" — the gated path included, for
+      callers that never passed `--yolo`. Same family as trap 35: what a
+      loop body reads must be computed before the loop.
+
+## The funnel integration contract (`trajectory-funnel/scripts/funnel.py`)
+
+`trajectory-funnel` is the optional pre-filter stage: it shrinks a large scan
+to the sessions worth reading before any human or agent reads prose. It is
+engine code in this repo, maintained separately from the skill — but it and
+the picker share OUTDIR's files, and that sharing is a contract this file has
+to record.
+
+**The picker's fzf input IS `OUTDIR/candidates.tsv`.** That is the whole
+integration problem. A funnel run that writes its survivors to a side file
+(what plain `run` does) has done nothing to the interactive flow: the picker
+still lists every candidate, the funnel table reports the survivors, and
+nothing anywhere reports the disagreement. Hence `run --in-place`: survivors
+REPLACE `candidates.tsv`, and the full set is archived first as
+`candidates.full.tsv` (idempotent across re-tunes: when the archive already
+exists a rerun unlinks the current file instead of overwriting the archive,
+so the archive always holds the original scan). The rebuilt scaffold is
+written through a tmp file and renamed, so a crash cannot leave a truncated
+screen.tsv behind.
+
+**The rebuilt `screen.tsv` must be the scaffold shape, header included.**
+`--in-place` rebuilds the scaffold from the survivors: the candidate columns
+verbatim plus two empty `suggested`/`reason` columns, i.e. exactly the shape
+scan deterministically emits (trap 46). Two ways to get this wrong, both
+raised by the E2E work:
+
+- **The header row is data, not decoration.** A rebuild that copies survivor
+  rows but drops the header leaves a file whose rows look right and which
+  cannot be joined. The picker resolves `suggested`/`reason` BY HEADER NAME
+  and aborts with "screen.tsv has no `suggested` column"; the interactive
+  path does not check that abort, so the symptom is an empty picker (fzf
+  renders 0/0) rather than an error.
+- **Rows carry the candidate columns verbatim.** The join keys on
+  `session_file`; a row whose cells were emptied or reordered matches
+  nothing, and the screening arrives as no suggestions at all.
+
+**yolo reads the same join, so a failed join must abort the run** — item 47:
+if `build_rows` fails and the branch falls through, "no rows" reads as
+"nothing was screened" and every candidate is exported, a silent misreading
+of a screening that did exist.
+
+### Dev tooling: standard library at runtime, `ty`/`ruff` in the devShell
+
+`funnel.py` imports nothing outside the Python standard library, and that is
+a runtime promise, not a style preference: users run the script on their own
+machines, wherever `python3` runs (the module docstring names the case — a
+scoop-installed Windows python). Every import would be a dependency such a
+user does not have and cannot be told to install.
+
+`ty` (type check) and `ruff` (lint/format) therefore live only in
+`flake.nix`'s devShell, next to `tmux` and `shellcheck`. They serve editing
+the file, not running it: the gate for a change to `funnel.py` is `ty` clean,
+`ruff` clean, `ruff format` applied. Nothing in the runtime path may import,
+invoke or require them — the artifact that runs on a user's machine is the
+one without them.
 
 ## Verification coverage
 
