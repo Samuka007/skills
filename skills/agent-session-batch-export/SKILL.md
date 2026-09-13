@@ -315,6 +315,37 @@ already handled in the script; this section is why the handling exists.
     space can produce.
 27. **The rendered query line trims its trailing space**, so asserting on its
     text cannot see a trailing space. Assert on an observable consequence.
+### Output directory
+
+`pick-sessions.sh` proposes a dated, agent-tagged default
+(`./curated-<agent>-<YYYYmmdd-HHMM>`) and confirms it interactively:
+Enter accepts, `e` then a path (Tab completes), `q` quits, or just type a path.
+`-y` skips the prompt; a non-tty invocation skips it too, so scripted runs never
+block. A fixed default would let consecutive runs pile into one directory and
+the corpus would stop describing a single selection.
+
+27. **`read -e` that fails has already consumed the line.** A per-call fallback
+    written as `read -e -r v || read -r v` reads TWICE at EOF: the first read
+    takes the answer (and returns non-zero at end-of-input), the second eats the
+    next input. Probe `read -e` support once at startup and use one call.
+    Probing with an empty string is a false negative — an empty here-string is
+    EOF, so probe with real content.
+28. **`finalize` clears `keep/` before materializing.** Copying is additive, so a
+    second run with a smaller selection left the earlier corpus in place:
+    `keep/` held 12 files while the manifest listed 3. That reads as a bug and,
+    worse, hands downstream analysis sessions the user had dropped. The corpus
+    is derived state and must equal the current decisions exactly.
+29. **Windows Terminal closes the window the moment the command returns**
+    (`closeOnExit` defaults to graceful), so the result path is never readable.
+    `--stay` holds it open, and it must be an EXIT `trap` rather than a `read`
+    at the end — otherwise it is missing on exactly the paths that need it
+    (abort, validation failure, crash).
+
+30. **`tmux send-keys` races anything the script does first.** Typing `e` after a
+    fixed `sleep 3` landed while `scan` was still running and was swallowed,
+    which looked like "the edit branch is broken". Wait for the prompt text to
+    appear on screen, then type.
+
 ## Adding a harness
 
 Add one `discover()` branch emitting `agent <TAB> cwd <TAB> mtime <TAB> file`,

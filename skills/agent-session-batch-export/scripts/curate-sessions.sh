@@ -408,6 +408,18 @@ if [[ "$cmd" == finalize ]]; then
   # and exit 2 — indistinguishable from a corrupt copy.
   OUTDIR_ABS="$(cd "$OUTDIR" && pwd)"
   KEEP_ABS="$OUTDIR_ABS/keep"
+
+  # Clear previous output before materializing. Copying is additive, so a second
+  # run over a different selection used to leave the earlier corpus in place —
+  # `keep/` showed 12 files while the manifest listed 3, which reads as a bug and
+  # could silently hand downstream analysis extra sessions the user had dropped.
+  # The corpus is derived state: it must describe the current decisions exactly.
+  if [[ -d "$KEEP_ABS" ]]; then
+    n_old="$(find "$KEEP_ABS" -maxdepth 1 -type f | wc -l | tr -d ' ')"
+    [[ "$n_old" -gt 0 ]] && echo "clearing $n_old file(s) from a previous run"
+    find "$KEEP_ABS" -maxdepth 1 -type f -delete
+  fi
+
   kept=0
   rowsfile="$(mktemp)"
   # strip CR: a human may edit the TSV in an editor that saves CRLF.

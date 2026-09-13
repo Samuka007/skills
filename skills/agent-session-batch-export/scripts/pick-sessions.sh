@@ -17,10 +17,13 @@ SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]
 ENGINE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/curate-sessions.sh"
 
 AGENT=both; WORKSPACE=""; TOPIC=""; SINCE=""; MIN_LINES=0
-OUTDIR="./session-curation"
+OUTDIR=""
 REVIEW_ONLY=0
 IN_TERMINAL=0
 NO_FINALIZE=0
+YES=0
+ASK_OUT=1
+STAY=0
 
 usage() {
   cat <<'USAGE'
@@ -34,10 +37,13 @@ Scan filters (passed through to `scan`):
   -n, --min-lines N               drop stub sessions
 
 Options:
-  -o, --out DIR        output directory (default ./session-curation)
+  -o, --out DIR        output directory. Default: ./curated-<agent>-<date>
+                       (confirmed interactively; -y to skip the prompt)
+  -y, --yes            do not prompt for the output directory
       --review-only    skip the scan; re-pick an existing OUTDIR
       --no-finalize    pick only; do not materialize the kept corpus
       --in-terminal    internal: already running inside the spawned window
+      --stay           internal: pause at the end so the window stays readable
   -h, --help
 USAGE
 }
@@ -50,9 +56,11 @@ while [[ $# -gt 0 ]]; do
     --since)         SINCE="$2"; shift 2 ;;
     -n|--min-lines)  MIN_LINES="$2"; shift 2 ;;
     -o|--out)        OUTDIR="$2"; shift 2 ;;
+    -y|--yes)        YES=1; shift ;;
     --review-only)   REVIEW_ONLY=1; shift ;;
     --no-finalize)   NO_FINALIZE=1; shift ;;
     --in-terminal)   IN_TERMINAL=1; shift ;;
+    --stay)          STAY=1; shift ;;
     -h|--help)       usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage; exit 2 ;;
   esac
@@ -60,6 +68,68 @@ done
 
 [[ -f "$ENGINE" ]] || { echo "engine not found next to this script: $ENGINE" >&2; exit 1; }
 for dep in jq rg; do command -v "$dep" >/dev/null || { echo "$dep is required" >&2; exit 1; }; done
+
+# --stay holds the window open, and it has to apply to EVERY exit path (accept,
+# abort via ESC, a validation failure, a crash). A per-path `read` would have to
+# be repeated at every `exit` and would be forgotten at exactly the moment it is
+# wanted. One EXIT trap covers them all.
+if [[ "${STAY:-0}" -eq 1 ]]; then
+  trap 'echo; printf "press Enter to close this window… "; read -r _ 2>/dev/null || true' EXIT
+fi
+
+# ------------------------------------------------------------ output directory
+# A dated, agent-tagged default, then confirmed interactively. Curating is
+# something you do repeatedly for different topics, so a fixed
+# ./session-curation silently mixes runs together — the previous run's files
+# stay behind and the corpus stops describing one selection. A dated default
+# makes each run its own directory without the user having to invent a name.
+if [[ -z "$OUTDIR" ]]; then
+  OUTDIR="./curated-${AGENT}-$(date +%Y%m%d-%H%M)"
+fi
+
+# Confirm the destination before anything is written. Skipped with -y, and
+# skipped entirely when there is no tty (a scripted/headless invocation must not
+# block on a prompt nobody can answer).
+# Does this bash support `read -e` (readline editing + Tab path completion)?
+# Probe ONCE, at startup, instead of trying it per prompt: at EOF `read` returns
+# non-zero *after* consuming the line, so a per-call `read -e … || read -r …`
+# fallback runs a SECOND read and eats the next input. That is exactly what
+# happened — 'e' consumed the answer and the follow-up read swallowed the path.
+# Probe with non-empty input: an empty string yields EOF, which returns non-zero
+# for the wrong reason and would report a false negative.
+READLINE="-e"
+if ! ( read -e -r _ <<< "probe" ) 2>/dev/null; then READLINE=""; fi
+
+# $READLINE is unquoted on purpose: it is either "-e" or empty, never user input.
+# shellcheck disable=SC2086
+prompt_read() { # $1 = variable name
+  local __v="$1"
+  local __line
+  if [[ -n "$READLINE" ]]; then read -e -r __line; else read -r __line || __line=""; fi
+  printf -v "$__v" '%s' "$__line"
+}
+
+prompt_outdir() {
+  local answer edited
+  printf '\n== output directory ==\n   %s\n' "$OUTDIR"
+  printf '   [Enter] accept   [e] edit   [q] quit > '
+  prompt_read answer
+  case "$answer" in
+    "" ) ;;
+    e|E) printf '   path (Tab completes): '
+         prompt_read edited
+         [[ -n "$edited" ]] && OUTDIR="$edited" ;;
+    q|Q) echo "aborted — nothing written."; exit 0 ;;
+    * )  OUTDIR="$answer" ;;   # typing a path directly also works
+  esac
+  printf '   -> %s\n\n' "$OUTDIR"
+}
+
+if [[ $ASK_OUT -eq 1 && $YES -eq 0 && -t 0 && -t 1 ]]; then
+  prompt_outdir
+elif [[ $YES -eq 1 || ! -t 0 ]]; then
+  echo "output directory: $OUTDIR"
+fi
 
 OUTDIR_ABS="$(mkdir -p "$OUTDIR" && cd "$OUTDIR" && pwd)"
 CAND="$OUTDIR_ABS/candidates.tsv"
@@ -88,7 +158,11 @@ have_tty() { [[ -t 0 && -t 1 ]]; }
 
 # Spawn a terminal that runs this script again with --in-terminal.
 spawn_terminal() {
-  local cmd="$SELF -o '$OUTDIR_ABS' --review-only --in-terminal"
+  # --stay keeps the spawned window alive after the run so the result path is
+  # actually readable. Windows Terminal defaults to closeOnExit=graceful, i.e.
+  # the window disappears the moment the command returns — the user never sees
+  # where the corpus landed, let alone gets to answer any prompt.
+  local cmd="$SELF -o '$OUTDIR_ABS' --review-only --in-terminal --stay"
   [[ $NO_FINALIZE -eq 1 ]] && cmd="$cmd --no-finalize"
 
   # WSL -> Windows Terminal (preferred), then cmd.exe. Both need wsl.exe, since
