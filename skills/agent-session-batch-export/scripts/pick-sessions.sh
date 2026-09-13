@@ -174,11 +174,14 @@ spawn_terminal() {
   # told the user to hand-edit the TSV instead.
   if [[ -n "${MSYSTEM:-}" ]] && command -v wt.exe >/dev/null 2>&1; then
     echo "opening Windows Terminal (Git Bash)…"
-    # The spawned bash must locate the script by its Windows-visible path, and
-    # START in a directory Windows understands.
-    local wself; wself="$(cygpath -w "$SELF" 2>/dev/null || printf '%s' "$SELF")"
-    local wout;  wout="$(cygpath -w "$OUTDIR_ABS" 2>/dev/null || printf '%s' "$OUTDIR_ABS")"
-    wt.exe -d "$wout" bash.exe -lc "bash '$wself' $cmd" >/dev/null 2>&1 && return 0
+    # MSYS rewrites POSIX-looking ARGUMENTS before a native program sees them,
+    # corrupting wt.exe's own flags: `-d C:\Users\...` arrived mangled and wt ran
+    # nothing at all (exit 0, no window). Verified: with MSYS_NO_PATHCONV=1 the
+    # identical invocation works. Same class as trap 7; this call site lacked it.
+    # Only -d needs converting: bash accepts the /c/... form of $SELF as-is.
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
+      wt.exe -d "$(cygpath -w "$OUTDIR_ABS" 2>/dev/null || printf '%s' "$OUTDIR_ABS")" \
+      bash.exe -lc "bash $cmd" >/dev/null 2>&1 && return 0
   fi
 
   # ── WSL ───────────────────────────────────────────────────────────────────
@@ -222,25 +225,13 @@ if ! have_tty; then
   if [[ $IN_TERMINAL -eq 1 ]]; then
     echo "still no terminal — falling back to the TSV workflow" >&2
   elif spawn_terminal; then
+    # The window owns the rest of the run; this process is done. We cannot
+    # observe the child's progress from here, so we do not pretend to: the
+    # spawned run prints its own result path and verifies its own copies.
     echo
-    # spawn_terminal returning 0 means a window was launched, not that the user
-    # finished picking. Poll briefly so the caller can tell "the picker ran" from
-    # "the window never came up", instead of reporting success blindly.
-    launched=0
-    for _ in $(seq 1 20); do
-      sleep 0.5
-      if pgrep -f "curate-sessions.sh review .*$OUTDIR_ABS|pick-sessions.sh .*--in-terminal" >/dev/null 2>&1; then
-        launched=1; break
-      fi
-    done
-    if [[ $launched -eq 1 ]]; then
-      echo "picker is running in the new window — confirm there with ENTER."
-      echo "corpus will land in: $OUTDIR_ABS/keep"
-      exit 0
-    fi
-    echo "a launcher was invoked but no picker appeared; use the TSV workflow:" >&2
-    echo "  vi $OUTDIR_ABS/decisions.tsv   # then: bash $ENGINE finalize -o $OUTDIR_ABS" >&2
-    exit 1
+    echo "picker opened in a new window — finish there (TAB mark, ENTER confirm)."
+    echo "corpus will land in: $OUTDIR_ABS/keep"
+    exit 0
   else
     cat >&2 <<EOF
 
