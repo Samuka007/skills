@@ -297,6 +297,14 @@ case "$agent" in
                    and (.payload.role=="user" or .payload.role=="assistant"))
                  | [.payload.role, (.payload.content | map(.text//empty) | join("\n"))]
                  | @tsv' "$f" 2>/dev/null | while IFS=$'\t' read -r role body; do
+            # @tsv escapes newlines/tabs inside a field as literal \\n / \\t, so
+            # multi-line messages would print a trailing "\\n" instead of
+            # breaking the line. jq -r already unescapes nothing here — undo the
+            # TSV escaping by hand before rendering.
+            body="${body//\\n/$'\n'}"
+            body="${body//\\t/$'\t'}"
+            body="${body//\\r/}"
+            body="${body//\\\\/\\}"
             # Drop the injected blocks BEFORE printing the [role] header, so a
             # user turn that is nothing but <environment_context> does not leave
             # a dangling empty label.
