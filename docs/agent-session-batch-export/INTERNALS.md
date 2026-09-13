@@ -306,6 +306,33 @@ These apply to the engine (`scripts/curate-sessions.sh`).
       with "yolo_fields: unbound variable" — the gated path included, for
       callers that never passed `--yolo`. Same family as trap 35: what a
       loop body reads must be computed before the loop.
+49. **A clientless zellij session cannot be read back: `dump-screen` returns
+    the screen the CLIENT rendered, and with no client there is none.** The
+    zellij branch of `--test-spawn` (trap 43) booted the session first and
+    placed the picker second, and could never have worked:
+    - `zellij --session N` from a headless caller attaches a client that
+      quits on stdin EOF and takes the session down with it. It also returned
+      rc=1 in that state, so the `|| return 1` behind it exited 1 with no
+      session and no message — a silent failure the next agent would have
+      trusted (verified: `--test-spawn zellij` printed nothing after the scan
+      and exited 1; `dump-screen` then answered "There is no active session").
+    - `zellij attach --create-background` survives, but has no client, and
+      that is fatal for reading a TUI back: with the pane process
+      demonstrably alive (it wrote a marker file) `dump-screen` returned 55
+      blank lines. The pane is not broken — nothing rendered it.
+    The shape that works is one step: a Windows Terminal window hosts the
+    client and the picker is the session's FIRST pane command
+    (`wt.exe --maximized -d DIR bash.exe -lc "zellij attach --create NAME --
+    bash -lc 'bash picker…'"`), so there is no second step to race and no
+    shell to type into. `--maximized` is part of the recipe, not decoration:
+    fzf draws its header inside its list column (40% of the pane), and a
+    default 66-column window renders the picker's `[N candidates; M
+    pre-selected]` line as `[3 candidates; 1 pr··` — an assertion on that
+    passes for the wrong reason. The window is not a separate resource to
+    reclaim: `zellij delete-session NAME --force` ends the client and the
+    window closes with it.
+    Recorded: `test/win-zellij-pick.sh` (the Windows regression that drives
+    the real picker exactly this way) and the 2026-09-13 issue-#7 run.
 
 ## The funnel integration contract (`trajectory-funnel/scripts/funnel.py`)
 
@@ -376,7 +403,7 @@ Not "the checks passed" — what each check covers, so the gaps are visible:
 | cross-platform identity | same file, sha256 computed under WSL and Git Bash, equal |
 | auto-spawn a terminal | Windows Git Bash: verified end-to-end. WSL: verified. Pure Linux: no spawn exists anymore (trap 42) — headless runs print the staged pipeline. |
 | `package` launcher | generated on Linux, then run by hand in a user terminal: fzf opens over screened candidates, ENTER finalizes and verifies. |
-| `--test-spawn` harness | tmux/zellij session created detached, driven via send-keys/write-chars, read back via capture-pane/dump-screen, reclaimed by the printed cleanup command. |
+| `--test-spawn` harness | tmux: session created detached, driven via send-keys, read back via capture-pane. zellij: the session is created through a maximized Windows Terminal window (its client — a clientless session dumps blank, trap 49), driven via send-keys, read back via dump-screen, reclaimed by the printed cleanup command. Both verified 2026-09-13; the zellij branch had been dead until then and failed silently. |
 
 Known blind spots: macOS has never been run (only the BSD `stat`/`shasum`
 branches were exercised via a stub).
@@ -403,10 +430,22 @@ Three setup facts, all of which fail confusingly if missed:
 - Set `show_release_notes false` and `show_startup_tips false`, or a first-run
   dialog swallows the typed command and the screen looks empty.
 
+A fourth fact, and the one that decides the whole recipe: **the session must
+have a client** (trap 49). Create it from a Windows Terminal window —
+`wt.exe --maximized -d DIR bash.exe -lc "zellij attach --create NAME -- bash
+-lc '<pane command>'"` — which stays attached as the client `dump-screen`
+renders for. A session created with `attach --create-background` dumps blank
+while its pane runs fine, and `zellij --session N` from a headless caller
+quits the session it just created. Maximize the window: the picker's
+`[N candidates; M pre-selected]` header lives in fzf's list column (40% of the
+pane) and a 66-column window truncates it to `[3 candidates; 1 pr··`.
+
 Facts a bare `dump-screen` cannot give you: whether the preview pane rendered
 *prose* (it can be blank while the header renders fine), and whether a keystroke
 was consumed. To be sure, have the command under test write a marker file and
-read that.
+read that. This cuts both ways: a blank dump is not evidence the process failed
+— check pane liveness (that marker file) before blaming the TUI, because a
+clientless session dumps blank no matter what the pane did.
 
 ## Adding a harness
 

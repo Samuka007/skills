@@ -46,6 +46,8 @@ bash test/ux-grounding.sh .                       # entry-point UX
 bash test/test-fzf-tmux.sh skills/agent-session-batch-export /tmp/fzft
 bash test/test-pick-tmux.sh "$PWD"                # whole one-command journey
 bash test/test-outdir-tmux.sh                     # output-directory prompt flow
+echo "--- interactive (Windows, run under Git Bash) ---"
+bash test/win-zellij-pick.sh                      # real picker through zellij (issue #7)
 echo "--- static ---"
 shellcheck skills/<name>/scripts/*.sh
 ty check skills/trajectory-funnel/scripts/funnel.py

@@ -390,8 +390,13 @@ spawn_terminal() {
 # monitored multiplexer for the agent that is ITERATING on this skill, chosen
 # per platform — tmux where it exists (Linux/WSL), zellij where tmux does not
 # (native Windows, scoop zellij; dump-screen reads the pane back). Creates a
-# detached session running the picker so the agent can drive the TUI
-# programmatically (send-keys / write-chars, then capture-pane / dump-screen).
+# session running the picker so the agent can drive the TUI programmatically
+# (send-keys / write-chars, then capture-pane / dump-screen).
+# The two platforms differ in one way that cannot be papered over: tmux can be
+# detached and still captured, zellij CANNOT (dump-screen reads the screen the
+# client rendered, and a clientless session dumps blank even while its pane
+# process runs) — so the zellij branch hosts its client in a Windows Terminal
+# window, which closes when the session is deleted. See that branch.
 # Idempotent: a stale session of the same name is killed first; the cleanup
 # command is printed so the caller can reclaim it. A headless caller canNOT
 # attach, so this never execs/attaches — it prints and returns.
@@ -415,18 +420,46 @@ test_spawn() { # $1 = tmux|zellij
       return 1
     fi
     command -v zellij >/dev/null 2>&1 || { echo "zellij not found (scoop install zellij)" >&2; return 1; }
+    # dump-screen reads the screen the CLIENT rendered, so the session must
+    # have a client from the moment it exists. Both clientless routes were
+    # tried and both fail: `zellij --session N` (what this branch used to do)
+    # attaches a client that quits on stdin EOF, takes the session down with
+    # it, and returned rc=1 in that state — so the old two-step boot here
+    # exited 1 SILENTLY (no session, no message), and a caller that trusted it
+    # drove nothing. `zellij attach --create-background` keeps the pane alive
+    # but has no client: the pane runs and writes files while dump-screen
+    # returns a blank screen. A Windows Terminal window therefore hosts the
+    # client, and the picker is the session's FIRST pane command
+    # (`attach --create … -- bash -lc`), so there is no second step to race.
+    command -v wt.exe >/dev/null 2>&1 || { echo "wt.exe not found (it hosts the zellij client)" >&2; return 1; }
     zellij delete-session "$sess" --force 2>/dev/null || true
-    # Two steps, both verified against zellij 0.45: an invocation with a bare
-    # command after `--` is REJECTED as a subcommand, so first boot the empty
-    # session, then `run -- <cmd>` places the picker in its first pane.
-    zellij --session "$sess" >/dev/null 2>&1 </dev/null || return 1
-    sleep 1
-    zellij --session "$sess" run -- bash -lc "bash $cmd" >/dev/null 2>&1 </dev/null || return 1
-    echo "test session created: zellij session '$sess'"
+    # --maximized, not a default window: fzf draws its header inside its list
+    # column (40% of the pane), so a default 66-column window renders the
+    # picker's `[N candidates; M pre-selected]` as `[3 candidates; 1 pr··` —
+    # an assertion on that passes for the wrong reason.
+    local wcmd winbash sessions i=0
+    printf -v wcmd '%q' "bash $cmd"
+    winbash="$(cygpath -w "$BASH" 2>/dev/null || printf 'bash.exe')"
+    wt.exe --maximized -d "$(cygpath -w "$OUTDIR_ABS" 2>/dev/null || printf '%s' "$OUTDIR_ABS")" \
+      "$winbash" -lc "zellij attach --create $sess -- bash -lc $wcmd" >/dev/null 2>&1 || return 1
+    # The client creates the session asynchronously: wait for it instead of
+    # racing the caller's first drive command.
+    sessions=""
+    while [[ $i -lt 20 ]]; do
+      sessions="$(zellij list-sessions 2>/dev/null)"
+      [[ "$sessions" == *"$sess"* ]] && break
+      sleep 0.5; i=$((i + 1))
+    done
+    [[ "$sessions" == *"$sess"* ]] || {
+      echo "zellij session '$sess' never came up; a zellij server may be wedged — reclaim with: zellij delete-session $sess --force" >&2
+      return 1
+    }
+    echo "test session created: zellij session '$sess' (its client is a Windows Terminal window)"
     echo "attach:    zellij attach $sess"
-    echo "drive:     zellij --session $sess action write-chars '<text>' ; zellij --session $sess action send-keys Enter"
+    echo "drive:     zellij --session $sess action send-keys Enter   # answer the output-directory prompt first"
+    echo "           zellij --session $sess action send-keys Tab     # TAB marks the highlighted row"
     echo "read back: zellij --session $sess action dump-screen"
-    echo "cleanup:   zellij delete-session $sess --force"
+    echo "cleanup:   zellij delete-session $sess --force   (this also closes the window)"
   fi
   return 0
 }
