@@ -118,53 +118,69 @@ else
   no "ENTER returned $sel rows, expected 3"
 fi
 
-echo "--- A4b. SPACE unmarks a pre-selected row ---"
-# restart: A4's ENTER ended the picker
+echo "--- A4b. TAB marks in place (no drift) ---"
+# Restart: A4's ENTER ended the picker. Fresh session => the 3 screening picks
+# are pre-selected, so one TAB on the top (already-marked) row unmarks it.
 tmux kill-session -t "$SESS" 2>/dev/null || true
 rm -f "$WORK/decisions.tsv" "$WORK/.chosen.tsv"
 run_picker
 before="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
-tmux send-keys -t "$SESS" Space; sleep 1
+tmux send-keys -t "$SESS" Tab; sleep 0.8
 after="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
-echo "  selected before=$before after SPACE=$after"
+echo "  selected $before -> $after after TAB"
 if [[ "$before" == "(3)" && "$after" == "(2)" ]]; then
-  ok "SPACE unmarked one row (3 -> 2)"
+  ok "TAB toggled the highlighted row (3 -> 2)"
 else
-  no "SPACE did not unmark: $before -> $after"
+  no "TAB did not toggle: $before -> $after"
 fi
-tmux send-keys -t "$SESS" Escape; sleep 1
-tmux kill-session -t "$SESS" 2>/dev/null || true
+# "in place" = the pointer did not move to another row
+# strip the marker glyph too: marking adds ┃, which is not a position change
+trim() { dump | grep -oE '▌[^│]*' | sed -n 1p | tr -d '▌┃ ' | cut -c1-24; }
+p1="$(trim)"
+tmux send-keys -t "$SESS" Tab; sleep 0.8
+p2="$(trim)"
+if [[ "$p1" == "$p2" ]]; then
+  ok "highlight stayed on the same row across TAB"
+else
+  no "highlight drifted: '$p1' -> '$p2'"
+fi
 
 echo
-echo "--- A4c. SPACE marks, and typing filters immediately (no search mode) ---"
-# The `/`-to-search mode was removed: SPACE must mark, always, and a modal
-# search cannot coexist with that. So the invariant is the plain one — typing
-# filters, SPACE still marks.
+echo "--- A4c. typing filters immediately, and SPACE types a space ---"
+# SPACE is unbound on purpose: that is what makes a query containing a space
+# possible without any search mode to enter or leave.
+tmux send-keys -t "$SESS" Escape; sleep 0.8
 tmux kill-session -t "$SESS" 2>/dev/null || true
-rm -f "$WORK/.chosen.tsv"
 run_picker
-tmux send-keys -t "$SESS" Space; sleep 0.7
-sel_sp="$(dump | grep -oE '\([0-9]+\)' | sed -n 1p)"
-echo "  SPACE from browse: selected=$sel_sp"
-# fresh session => the 3 screening picks are pre-selected again, so one SPACE
-# on the top (already-marked) row UNMARKS it: 3 -> 2.
-if [[ "$sel_sp" == "(2)" ]]; then
-  ok "SPACE toggled the highlighted row (3 -> 2)"
-else
-  no "SPACE did not toggle: expected (2), got $sel_sp"
-fi
-
-before="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
+b0="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
 tmux send-keys -t "$SESS" "codex"; sleep 1
-after="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
-qs="$(dump | grep -E '^> ' | sed -n 1p | sed 's/[[:space:]]*╭.*$//' | sed 's/^> *//')"
-echo "  typing 'codex': match $before -> $after   query=[${qs:0:20}]"
-if [[ "$before" != "$after" ]]; then
-  ok "typing filters immediately ($after)"
+b1="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
+if [[ "$b0" != "$b1" ]]; then
+  ok "typing filters immediately ($b0 -> $b1)"
 else
-  no "typing did not filter: still $after"
+  no "typing did not filter: still $b1"
 fi
-tmux send-keys -t "$SESS" Escape; sleep 1
+# Assert with a discriminator that CAN move: two rows sharing a first token and
+# differing in the second. A query of "aa bb" narrows to 1 only if the space
+# really separated the tokens. (Rendered query text is not usable here — fzf
+# trims the trailing space — and a fuzzy match count cannot distinguish.)
+tmux send-keys -t "$SESS" Escape; sleep 0.5
+tmux kill-session -t "$SESS" 2>/dev/null || true
+tmux new-session -d -s "$SESS" -x 160 -y 30
+tmux send-keys -t "$SESS" "printf 'aa bb\naa cc\nzz\n' | fzf --multi --layout=reverse --no-sort > /dev/null" Enter
+sleep 2.5
+tmux send-keys -t "$SESS" "aa"; sleep 0.7
+s1="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
+tmux send-keys -t "$SESS" Space; sleep 0.5
+tmux send-keys -t "$SESS" "bb"; sleep 0.9
+s2="$(dump | grep -oE '[0-9]+/[0-9]+' | sed -n 1p)"
+echo "  'aa' -> $s1    'aa'+SPACE+'bb' -> $s2"
+if [[ "$s1" == "2/3" && "$s2" == "1/3" ]]; then
+  ok "SPACE acts as a token separator (query 'aa bb' -> 1 match)"
+else
+  no "space did not separate tokens: $s1 then $s2"
+fi
+tmux send-keys -t "$SESS" Escape; sleep 0.8
 tmux kill-session -t "$SESS" 2>/dev/null || true
 
 echo "--- A5. ctrl-a then ENTER takes exactly the agent-kept rows ---"

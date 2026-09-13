@@ -294,17 +294,27 @@ already handled in the script; this section is why the handling exists.
     shell outlives fzf, so `tmux has-session` reports alive either way — this
     produced a false "ESC is broken" regression during development. Write a
     marker file after fzf returns.
-24. **A modal `/`-search mode was tried and REMOVED.** It forces a trade: while
-    search is on, SPACE must type a space, so it cannot mark; and the user has
-    to remember which mode they are in and how to leave it (`ctrl-b`, since ESC
-    must stay as abort). Marking is the primary action, so it now always behaves
-    identically. Accepted cost: **a query cannot contain a space**, because
-    typing filters immediately.
+24. **Do not bind SPACE.** Two designs were tried and both cost more than they
+    bought:
+    - `space:toggle` — SPACE ate the space, so no query could contain one;
+    - a modal `/`-search with `unbind(space)` — that works, but forces the user
+      to track which mode they are in and to remember `ctrl-b` to leave it.
+    Leaving SPACE **unbound** solves it outright: it is an ordinary character,
+    so queries may contain spaces with no mode to enter or leave. The marking
+    key is `TAB`, which has no character to steal. That is the current design.
 25. **`--disabled` still accumulates typed characters into the query.** Pressing
     `/` then filtered on whatever had been typed beforehand (`al` -> 1/3 while
-    `--disabled` had shown 3/3). Any future modal design must add `clear-query`
-    to the enabling binding.
-
+    `--disabled` had shown 3/3). Any future modal design needs `clear-query` in
+    the enabling binding.
+26. **fzf matches FUZZY, so "the match count did not change" is not evidence
+    that a keystroke was lost.** Probing whether a space reached the query with
+    rows `codex x` / `codexx` showed no change and looked like a swallowed
+    space — but `x` fuzzy-matches `codexx` too, so the count could not move
+    either way. A valid discriminator needs mutually exclusive results: rows
+    `aa bb` / `aa cc` give 2/3 for `aa` and 1/3 for `aa bb`, which only the
+    space can produce.
+27. **The rendered query line trims its trailing space**, so asserting on its
+    text cannot see a trailing space. Assert on an observable consequence.
 ## Adding a harness
 
 Add one `discover()` branch emitting `agent <TAB> cwd <TAB> mtime <TAB> file`,

@@ -260,7 +260,7 @@ else
   echo "   no screening ran; nothing is pre-selected. All $total are listed."
 fi
 cat <<'KEYS'
-   SPACE  mark / unmark the highlighted row      TAB  same, then move down
+   TAB    mark / unmark the highlighted row (stays put)
    ENTER  confirm  (marked rows are kept)        ESC  abort
    ctrl-a all   ctrl-d none      ctrl-o hide/show preview
    shift-↑/↓ scroll preview   PgUp/PgDn by page   alt-↑/↓ top/bottom
@@ -270,20 +270,17 @@ cat <<'KEYS'
 KEYS
 echo
 
-# SPACE always marks; there is no search mode to leave.
+# TAB marks and stays on the row; SPACE is deliberately NOT bound.
 #
-# A `/`-to-search mode was tried and removed. Making search modal forces a
-# choice: while search is on, SPACE must type a space, so it cannot also mark.
-# That escape hatch (a key to leave search, plus having to remember which mode
-# you are in) turned out to be worse than the problem it solved. Marking is the
-# primary action here and it now always behaves the same way.
+# Binding SPACE to `toggle` cost the ability to type a space in the query, and
+# a modal `/`-search (tried, then removed) only traded that for a worse problem:
+# a mode to track plus a key to escape it. Leaving SPACE unbound solves it in
+# one move — it is an ordinary character, so queries may contain spaces, and the
+# marking key is TAB, which has no character to steal.
 #
-# Consequence, stated plainly: typing goes straight into the query and filters
-# immediately, so a query cannot contain a space. Everything before the first
-# space still works normally.
-#
-# SPACE toggles: TAB is the fzf default but space is what a checklist UI trains
-# people to press. TAB is bound too (plus a nudge down), since some reach for it.
+# TAB keeps fzf's default `toggle` with the default "move down" removed, so it
+# is a pure mark/unmark like a checkbox and does not scroll away from the row
+# just marked.
 #
 # No --with-nth: it transforms the fields AND the fields fzf writes back on
 # selection, which silently mangled the session paths (only rows whose shifted
@@ -305,11 +302,10 @@ chosen="$(fzf --multi --ansi --delimiter='\t' \
     --no-sort \
     --preview "$PREVIEW {}" \
     --preview-window=right:60%:wrap \
-    --header="SPACE mark · ENTER confirm · ESC abort · shift-↑/↓ preview
+    --header="TAB mark · ENTER confirm · ESC abort · shift-↑/↓ preview
 [$total candidates; $n_keep_sug pre-selected]  columns: agent · cwd · size · events · first-prompt · file · suggested · reason" \
     --bind "load:$sel_seq" \
-    --bind 'space:toggle' \
-    --bind 'tab:toggle+down' \
+    --bind 'tab:toggle' \
     --bind 'ctrl-a:select-all' --bind 'ctrl-d:deselect-all' \
     --bind 'ctrl-o:toggle-preview' \
     --bind 'pgdn:preview-page-down' --bind 'pgup:preview-page-up' \
