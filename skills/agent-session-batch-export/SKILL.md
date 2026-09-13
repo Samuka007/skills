@@ -114,21 +114,25 @@ recommendation, never the decision. The two paths divide finalize's meaning:
 - **Headless**: `finalize` is the agent-delegated interface, and it is only
   legitimate AFTER the gate below has passed.
 
-After stage 2 you MUST stop and ask the user before anything touches
-`decision` or runs `finalize`:
+After stage 2 you MUST stop and put the choice in front of the user before
+anything touches `decision` or runs `finalize`:
 
 1. Present the screening summary: how many candidates, how many you marked
    keep, and the drop reasons (grouped, one line each).
-2. Offer the interactive review — that is what it exists for:
-   - Windows: the `.ps1` entry point spawns a picker window, OR the
-     `package`d launcher (`open-review.sh`) the user runs in their own
-     terminal;
-   - WSL: same, via the Windows-side terminal;
-   - pure Linux: the `package`d launcher.
-3. If the user cannot or does not want the interactive picker, hand them
-   `decisions.tsv` for a quick read-through and let them say "go" — only
-   then run `finalize` as the user's delegate. `review --ui tsv` prints this
-   gate at its exit so it reaches every agent on the headless path.
+2. **Then launch the interactive picker for them — that is the default, not
+   an option to offer:** on Windows run `pick-sessions.ps1` (or `pick-sessions.sh`
+   under WSL); a picker window opens over the screened list and the user's
+   ENTER inside fzf finalizes and verifies in one go. YOU can start this
+   yourself — do not merely describe it and fall back to asking for a text
+   reply. Only when the picker cannot open (pure Linux, no desktop) hand the
+   user the `package`d launcher: `curate-sessions.sh package`, then tell
+   them to run `bash open-review.sh` in any terminal.
+3. Text-only confirmation ("reply 确认导出") is the FALLBACK, for when the
+   user explicitly declines the picker or no terminal can be opened. Fill
+   nothing yourself: the user edits `decisions.tsv` (or tells you the exact
+   changes), then and only then run `finalize` as their delegate.
+   `review --ui tsv` prints this gate at its exit so it reaches every agent
+   on the headless path.
 
 Do NOT fill the `decision` column yourself and finalize. Two real runs did
 exactly that: the user asked for an export and got one without ever seeing
