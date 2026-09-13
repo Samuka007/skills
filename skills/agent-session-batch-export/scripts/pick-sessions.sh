@@ -165,6 +165,23 @@ spawn_terminal() {
   local cmd="$SELF -o '$OUTDIR_ABS' --review-only --in-terminal --stay"
   [[ $NO_FINALIZE -eq 1 ]] && cmd="$cmd --no-finalize"
 
+  # ── Native Windows (Git Bash / MSYS) ──────────────────────────────────────
+  # Detected by MSYSTEM, NOT by wt.exe's presence: wt.exe is on PATH inside WSL
+  # too. Here the shell to relaunch is Git Bash itself — invoking wsl.exe would
+  # be wrong, and on a machine with no WSL it would simply fail. Every other
+  # branch below is unreachable here (no WSL_DISTRO_NAME, no X terminals, no
+  # tmux under MSYS), so without this the whole auto-spawn silently failed and
+  # told the user to hand-edit the TSV instead.
+  if [[ -n "${MSYSTEM:-}" ]] && command -v wt.exe >/dev/null 2>&1; then
+    echo "opening Windows Terminal (Git Bash)…"
+    # The spawned bash must locate the script by its Windows-visible path, and
+    # START in a directory Windows understands.
+    local wself; wself="$(cygpath -w "$SELF" 2>/dev/null || printf '%s' "$SELF")"
+    local wout;  wout="$(cygpath -w "$OUTDIR_ABS" 2>/dev/null || printf '%s' "$OUTDIR_ABS")"
+    wt.exe -d "$wout" bash.exe -lc "bash '$wself' $cmd" >/dev/null 2>&1 && return 0
+  fi
+
+  # ── WSL ───────────────────────────────────────────────────────────────────
   # WSL -> Windows Terminal (preferred), then cmd.exe. Both need wsl.exe, since
   # fzf here is a Linux binary that needs a Linux tty.
   if [[ -n "${WSL_DISTRO_NAME:-}" ]] && command -v wt.exe >/dev/null 2>&1; then
