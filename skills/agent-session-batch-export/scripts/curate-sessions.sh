@@ -263,8 +263,18 @@ if [[ "$cmd" == scan ]]; then
           # means the same thing on every platform (a filter for "proj" works on
           # both). The trajectory itself is copied byte-identical and untouched.
           cwd="${cwd//\\//}"
-          mtime="$(stat_pair "$f")"; mtime="${mtime#* }"
-          printf '%s\t%s\t%s\t%s\n' "$1" "$cwd" "$mtime" "$f"
+          # stat_pair already returns "<bytes> <mtime>" — keep BOTH. The main
+          # loop below needs size again, and a second stat per file is another
+          # fork per candidate: on MSYS every fork is a simulated fork
+          # (CreateProcess + cygheap copy), and high fork density inside a
+          # spawned-terminal subtree is what trips "cygheap read copy failed"
+          # transiently. One stat per file, total.
+          # Deliberate split: stat_pair prints "<bytes> <mtime>".
+          # shellcheck disable=SC2207
+          __st=($(stat_pair "$f"))
+          # Column order here is agent <TAB> cwd <TAB> mtime <TAB> size <TAB>
+          # file; the awk filter below and the main loop both know it.
+          printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$cwd" "${__st[1]}" "${__st[0]}" "$f"
         done
   }
 
@@ -292,7 +302,7 @@ if [[ "$cmd" == scan ]]; then
   fi
 
   awk -F'\t' -v w="$WORKSPACE" -v since_e="$since_e" '
-    NF >= 4 {
+    NF >= 5 {
       if (w != "" && index($2, w) == 0) next
       if (since_e + 0 > 0 && ($3 + 0) < since_e + 0) next
       print
@@ -302,8 +312,9 @@ if [[ "$cmd" == scan ]]; then
   printf '%s\n' "$header" > "$CAND"
 
   n=0
-  while IFS=$'\t' read -r agent cwd mtime f; do
-    size=$(stat_size "$f")
+  # size arrives from emit_sessions (single stat per file above) — do not
+  # stat again here, that was one more fork per candidate on every platform.
+  while IFS=$'\t' read -r agent cwd mtime size f; do
     lines=$(wc -l < "$f" 2>/dev/null || echo 0)
     (( lines < MIN_LINES )) && continue
     if [[ -n "$TOPIC" ]]; then
