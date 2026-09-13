@@ -21,6 +21,16 @@ not a lossy view of it.
 
 ## Pipeline
 
+Prefer the one-command entry point. It runs the whole pipeline and opens a
+picker in a real terminal, spawning one if necessary:
+
+```bash
+bash scripts/pick-sessions.sh -o ./cur --agent codex --min-lines 20
+```
+
+That is the intended UX. The four stages below are the manual equivalent, and
+what the entry point calls internally.
+
 Run the stages in order. Stage 2 is yours to perform; the rest are commands.
 
 ```bash
@@ -112,6 +122,67 @@ backgrounded or interrupted, which hangs instead of failing.
 
 `validate` checks a TSV's column shape and tallies its decision column.
 
+## WSL and Windows
+
+There are two different "Windows" situations and they need different answers.
+
+### Bash running inside WSL
+
+The common case: you are in a WSL shell, `fzf` is available, and the sessions
+you want to curate may live on either side (`~/.codex` in WSL, or
+`/mnt/c/Users/<you>/.codex` on the Windows side — same file format, and the
+script reads either).
+
+If the shell has a real terminal, `pick-sessions.sh` just runs. If it does not
+— invoked from a tool call, a CI step, or any non-interactive context — it
+**opens its own terminal** and runs the picker there, in this order:
+
+1. `wt.exe -- wsl.exe -d $WSL_DISTRO_NAME` — Windows Terminal (preferred)
+2. `cmd.exe /c start … wsl.exe` — a plain console window
+3. (native Linux desktops) `x-terminal-emulator`, `alacritty`, `kitty`,
+   `wezterm`, `foot`, `gnome-terminal`, `konsole`, `xterm`
+4. `tmux` — the last resort, because it supplies a real tty with no GUI
+
+It then polls briefly to confirm a picker actually appeared before reporting
+success, and prints the hand-edit TSV workflow if nothing came up. Launching a
+window is not the same as the user having picked; the script does not pretend
+otherwise.
+
+Why a spawned **WSL** terminal rather than a native Windows one: `fzf` here is
+a Linux binary and needs a Linux tty. The Windows Terminal window is only the
+outer frame; the shell inside it is WSL.
+
+### Bash running natively on Windows (Git Bash / MSYS)
+
+Here the whole script runs under MSYS, with no WSL in the picture.
+
+Setup is two packages — MSYS already bundles the rest of the POSIX userland:
+
+```bash
+scoop install jq ripgrep          # or: winget install jqlang.jq BurntSushi.ripgrep.MSVC
+```
+
+`tmux` does not exist under MSYS, so fallback level 4 above is unavailable.
+Windows Terminal can still be spawned (`wt.exe`), and Git Bash inside it gives
+the picker a real tty.
+
+Two MSYS behaviours are handled in the scripts, both of which fail silently if
+you "simplify" them away — see the portability traps below:
+
+- **argument path rewriting** (`jqd()`), and
+- **CRLF from `jq -r`** (CR stripping on every field used verbatim).
+
+### What is verified where
+
+| | WSL / Linux | Git Bash (MSYS) |
+|---|---|---|
+| scan, filters, `--ui tsv`, finalize, sha256 | yes | yes |
+| `--ui fzf` keypress interaction | yes (real PTY via tmux) | not verified — no PTY driver |
+| auto-spawn a terminal | yes (Windows Terminal) | launcher present; keypress path unverified |
+
+The Windows figures come from a real Git Bash session against the user's own
+`C:\Users\…\.codex` and `.claude` trees, not from a fixture.
+
 ## Data sources
 
 | Agent | Path | Workspace field | Prose field |
@@ -175,6 +246,36 @@ already handled in the script; this section is why the handling exists.
    only the second `if`, the claude half leaked to stdout and the candidate
    file silently held codex alone.
 11. **`--latest`** collapses a workspace's stale rollout files to the newest.
+
+### Traps specific to the picker (`pick-sessions.sh`)
+
+12. **`--preview {n}` indexes the *display* row once `--with-nth` is set**, not
+    the original fields. Verified by experiment: `--with-nth=3,1` with
+    `--preview {1}` yielded the old third column. The picker passes the whole
+    row (`{}`) and parses it itself, so the two can never disagree.
+13. **`--with-nth` also transforms the row fzf writes back on selection.** The
+    session path was silently mangled and only rows whose shifted column
+    happened to be a valid path survived. The picker therefore uses no
+    `--with-nth` at all: display order equals file order and the returned row is
+    byte-identical to the input row.
+14. **`start:` fires before the input is loaded, so `start:select-all` selects
+    nothing** — it looks like it worked and silently leaves `(0)` selected.
+    `load:` fires after loading and does work (`--sync` also rescues `start:`).
+    The picker binds `load:`.
+15. **Selection actions act on the matched set, never on a row id**, so
+    "pre-select these N rows" means positioning and toggling N times. Because
+    the keeps are sorted to the top, that is the sequence
+    `pos(1)+toggle+down+…+toggle+first`.
+16. **fzf's default layout draws item 1 at the BOTTOM.** Sorted-keeps-first
+    therefore looked like nothing had sorted. `--layout=reverse` puts item 1 on
+    the top line, which is what a reader expects.
+17. **The `(N)` in fzf's `N/M (N)` info line IS the selected count** —
+    established by experiment, not by the docs. Use it to verify pre-selection;
+    ENTER with nothing ticked still returns the *highlighted* row, not nothing.
+18. **The `\x1f` rule from trap 4 applies to the picker's own readers too.** It
+    was reintroduced there: a row with an empty `first_prompt` lost that field
+    to IFS-whitespace collapsing, every later column shifted left, and 2 of 15
+    selected sessions silently never reached the manifest.
 
 ## Adding a harness
 
