@@ -187,8 +187,17 @@ spawn_terminal() {
     # path-conversion guard; inside the -lc string $SELF stays a /c/... path,
     # which the child MSYS bash opens happily.
     local wbash; wbash="$(cygpath -w "$BASH" 2>/dev/null || cygpath -w /usr/bin/bash 2>/dev/null || printf 'bash.exe')"
-    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' \
-      wt.exe -d "$(cygpath -w "$OUTDIR_ABS" 2>/dev/null || printf '%s' "$OUTDIR_ABS")" \
+    # Convert first, then run wt with NO MSYS_* in the environment. Two reasons:
+    #  1. `MSYS_NO_PATHCONV=1 cmd` exports the variable for the WHOLE subtree, so
+    #     the spawned bash — and every jq it runs — inherited it. jq.exe is a
+    #     native binary and with conversion disabled it could not open the
+    #     `/c/...` paths MSYS bash hands it ("Could not open file ... No such
+    #     file"), which blanked the preview pane. This is exactly the trap
+    #     documented in curate-sessions.sh, where the exemption is confined to
+    #     the data argument only; applying it to the process broke the operand.
+    #  2. Passing already-converted paths means there is nothing left to rewrite,
+    #     so the guard is unnecessary here in the first place.
+    wt.exe -d "$(cygpath -w "$OUTDIR_ABS" 2>/dev/null || printf '%s' "$OUTDIR_ABS")" \
       "$wbash" -lc "bash $cmd" >/dev/null 2>&1 && return 0
   fi
 
