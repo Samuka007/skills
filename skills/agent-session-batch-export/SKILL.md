@@ -86,6 +86,19 @@ Each stage has one completion criterion:
 | `review` | `decisions.tsv` has a `decision` on every row |
 | `finalize` | the user approved the keep/drop list (Hand-off gate), `manifest.json` lists every kept session, and each `kept_as` compares equal to its `source` |
 
+### Pre-filter: `candidates.tsv` may already be funnel survivors
+
+A deterministic pre-filter may already have run between `scan` and you. When it
+has, its survivors **are** `candidates.tsv` — the full scan is archived beside
+them as `candidates.full.tsv` — and `screen.tsv` was rebuilt for exactly those
+rows, with the same `suggested`/`reason` columns to fill. The funnel's
+recommendation travels in `screen.tsv`'s `suggested` column: its survivors are
+the rows it recommends for attention, and the rows you mark `keep` there are
+what the picker pre-selects and `--yolo` exports. Everything downstream —
+`review`, `finalize`, the gate — reads the same files either way. The engine is
+repo-only (`skills/trajectory-funnel/scripts/funnel.py`) and does not ship with
+this skill.
+
 ## Screening (stage 2)
 
 `scan` writes TWO files: `candidates.tsv` (7 columns, for reference) and
