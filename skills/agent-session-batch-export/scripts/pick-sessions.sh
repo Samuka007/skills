@@ -275,12 +275,21 @@ printf '\033[1m%s\033[0m  \033[2m%s\033[0m\n' "$agent" "$f"
 printf 'size: %s bytes   events: %s\n' "$size" "$n_lines"
 [[ -n "$sug" ]] && printf 'agent suggests: \033[33m%s\033[0m — %s\n' "$sug" "$why"
 printf '\n\033[2m--- opening prose ---\033[0m\n'
+# Only real conversation belongs here. Codex marks every injected block as a
+# `message` too, so filtering on payload.type alone drags in the three
+# `developer` blocks (app-context, team preamble, multi-agent mode) — hundreds
+# of lines of boilerplate that buried the actual first exchange past the cutoff
+# and made the pane look empty. Filter on ROLE, and label it, so a reader can
+# tell who said what.
 case "$agent" in
   claude) jq -r 'select(.type=="user" or .type=="assistant") | .message.content
                  | if type=="array" then map(select(.type=="text")|.text)|join("\n")
                    else (if type=="string" then . else "" end) end' "$f" 2>/dev/null ;;
-  codex)  jq -r 'select(.type=="response_item" and .payload.type=="message")
-                 | .payload.content | map(.text//empty) | join("\n")' "$f" 2>/dev/null ;;
+  codex)  jq -r 'select(.type=="response_item" and .payload.type=="message"
+                   and (.payload.role=="user" or .payload.role=="assistant"))
+                 | .payload.role as $r
+                 | (.payload.content | map(.text//empty) | join("\n"))
+                 | "\n\u001b[36m[" + $r + "]\u001b[0m\n" + .' "$f" 2>/dev/null ;;
 esac | awk '{ sub(/^[ \t\r]+/,"") }
             $0 ~ /^</ { next } $0 ~ /<environment_context>/ { next }
             $0 ~ /<user_instructions>/ { next } $0 ~ /<permissions/ { next }
@@ -393,7 +402,7 @@ chosen="$(fzf --multi --ansi --delimiter='\t' \
     --layout=reverse \
     --nth=5,2 \
     --no-sort \
-    --preview "$PREVIEW {}" \
+    --preview "'$PREVIEW' {}" \
     --preview-window=right:60%:wrap \
     --header="TAB mark · ENTER confirm · ESC abort · shift-↑/↓ preview
 [$total candidates; $n_keep_sug pre-selected]  columns: agent · cwd · size · events · first-prompt · file · suggested · reason" \
