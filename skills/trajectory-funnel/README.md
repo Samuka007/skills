@@ -86,6 +86,21 @@ python3 "$F" run "$OUT/candidates.tsv" "$OUT/.unused" --in-place \
 Subcommands: `run` (filter), `enrich` (add computed columns — turns, tool
 counts, last stop reason, chars — without filtering), `presets` (list them).
 
+## Demo
+
+The downstream half of this pipeline — the picker reading a funnel's survivors —
+recorded on synthetic sessions:
+
+```bash
+asciinema play docs/agent-session-batch-export/demo.cast
+```
+
+It covers pre-selection, a human overriding the suggestion in both directions,
+and the byte-identity check after `finalize`. The recording and its
+reproduction script live in the sibling skill's repo-only `docs/` directory:
+[`demo-transcript.txt`](../../docs/agent-session-batch-export/demo-transcript.txt)
+(text version) and [`demo.sh`](../../docs/agent-session-batch-export/demo.sh).
+
 ## Design rules (do not violate when extending)
 
 - Python standard library only; streaming, never the whole corpus.

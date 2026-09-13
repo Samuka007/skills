@@ -109,6 +109,21 @@ MSYS bundles the rest.
 Terminal spawns are *requested, not verified* — if no window appeared, run
 the staged commands, which the entry point prints alongside every spawn.
 
+## Demo
+
+The real picker flow, recorded on synthetic sessions (fabricated `.jsonl`, no
+real transcript data): pre-selection from the screen, a human overriding the
+agent's suggestion in both directions, ENTER, and the byte-identity check.
+
+```bash
+asciinema play docs/agent-session-batch-export/demo.cast
+```
+
+No asciinema? [`demo-transcript.txt`](../../docs/agent-session-batch-export/demo-transcript.txt)
+is the same run captured as three labeled pane snapshots. Reproduce it with
+`bash docs/agent-session-batch-export/demo.sh` (fixtures go to `/tmp/asbe-demo`,
+safe to delete after).
+
 ## Requirements
 
 bash 3.2+ with a POSIX userland (awk, sed, find, stat, cmp, sort, cut, tr,
