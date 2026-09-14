@@ -88,6 +88,26 @@ recommendation. Details and the exact gate protocol live in
 (`cmp` + recorded sha256) for every kept session; the picker runs the same
 check automatically after an interactive pick.
 
+### No-review export: `--yolo`
+
+When the user has explicitly opted out of reviewing the selection, `--yolo`
+skips the picker and exports the screened `keep` rows — or all candidates when
+nothing was screened:
+
+```bash
+bash scripts/pick-sessions.sh -o ./cur --agent codex --min-lines 20 --yolo
+```
+
+On the staged path the flag goes to finalize: `bash $C finalize -o $OUT --yolo`.
+Nothing in the integrity chain is skipped — sha256 and `cmp` verify every copy,
+exactly as after an interactive pick. What changes is the provenance record:
+the manifest stamps `mode=yolo`, `reviewed=false`, `approved_by=user-opt-out`
+on every entry, so a no-review export cannot masquerade as a reviewed one.
+
+This is only for runs where the user explicitly opted out. The agent's rule —
+what counts as an explicit opt-out, and what to do otherwise — is in
+[`SKILL.md` § Escape clause](SKILL.md).
+
 ## Interaction surfaces
 
 Which picker can run is decided by one question: **can a Windows-side
