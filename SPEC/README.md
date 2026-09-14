@@ -91,6 +91,13 @@ at from here.
   change to the entry point: run the suites in the same session, and when a
   behaviour is added for a prompt or a flag, update every suite that drives that
   path rather than only the one written for the new behaviour.
+- **Open question: `approved_by` records a claim, not a fact.** The manifest
+  stamps `approved_by=user-opt-out` whenever `--yolo` was passed, so an agent
+  that ran yolo without the user asking for it writes an untrue provenance
+  record — the field cannot distinguish "the user opted out" from "the agent
+  decided they had". Making it true would mean carrying the user's own words
+  into the run (`--yolo --because "<quote>"`) or refusing yolo without one.
+  Raised with the user; not decided, and nothing is built for it.
 
 ## Real-machine acceptance (Windows Git Bash)
 
