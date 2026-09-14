@@ -24,6 +24,7 @@ at from here.
 | 8 | Windows interactive picker through zellij | **done** | commit `65464bb`; `test/win-zellij-pick.sh` ran on the real machine (Windows Git Bash, installed copy, zellij 0.45.1) and asserted the pane: `[3 candidates; 1 pre-selected]` → Down+TAB → `3/3 (2)` → ENTER → `kept 2 of 3` → `verified: 2/2`; teardown clean (no session, no process, fixtures gone); closed |
 | 9 | demo renders on GitHub | **done** | commit `f5fc821` (`docs/agent-session-batch-export/demo.gif`, 209 KiB, regenerable byte-identically via `agg`); GitHub's rendered HTML carries `<img src="…/raw/master/docs/…/demo.gif">` and the raw URL answers `content-type: image/gif`, 213680 bytes |
 | 10 | repair the interactive suites | **done** | commit `08f10f1`; all suites green; `test-pick-tmux.sh` 1/8 → 16/16 |
+| 11 | README: document `--yolo` | **done** | commit `cde2224` (issue #8, auto-closed); `### No-review export: --yolo` under Quickstart; statement-by-statement cross-check against SKILL.md § Escape clause found no disagreement; `test/yolo-e2e.sh` re-run green |
 
 ## Decisions and constraints (apply to all future items)
 
