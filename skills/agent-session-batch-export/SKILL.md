@@ -216,6 +216,13 @@ The picker runs this check itself after finalizing and prints
 
 `validate` checks a TSV's column shape and tallies its decision column.
 
+`delivery` packages `OUT/keep/` + `OUT/manifest.json` into one archive for
+handing over. The format follows the platform (`zip` on Windows Git Bash,
+`tar.gz` elsewhere) and `--out FILE` names the archive explicitly; the manifest
+is always inside it. It verifies every recorded `sha256` before packing and
+reads the archive back afterwards, and refuses when there is nothing to package
+rather than producing an empty archive.
+
 `pick-sessions.sh` accepts `-a/--agent`, `-w/--workspace`, `-t/--topic`,
 `--since`, `-n/--min-lines`, `-o/--out`, `-y/--yes`, `--review-only`,
 `--yolo`, `--no-finalize`, `--stay`, `-h`.

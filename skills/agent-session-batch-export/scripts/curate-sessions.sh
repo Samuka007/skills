@@ -49,6 +49,10 @@ MIN_LINES=0
 UI=fzf
 HARDLINK=0
 FROM=""
+# delivery's archive override. `-o` is the working directory on every command;
+# `delivery` takes the contract's `--out FILE` as the path of the ARTIFACT it
+# produces (issue #10), so the two spellings are split in the parse loop.
+ARCHIVE_OUT=""
 # yolo: the USER explicitly opted out of reviewing the selection ("直接导出，
 # 不用我看", "just export it"). It changes the manifest's provenance record —
 # NEVER the integrity checks: sha256 + cmp run identically either way.
@@ -72,6 +76,10 @@ Commands
   package     write OUT/open-review.sh: a one-click launcher the USER runs in
               their own terminal after the agent finished scan+screen. It opens
               the fzf review and finalizes with verification when accepted.
+  delivery    package OUT/keep/ + OUT/manifest.json into ONE archive for
+              handing to the buyer: verifies every recorded sha256 first, then
+              writes OUT/<name>-<date>.zip|tar.gz with the corpus at its root
+              and reads the archive back to confirm the members.
   validate    sanity-check a candidates/decisions TSV (column shape)
 
 Shared options
@@ -94,6 +102,10 @@ finalize options
                         ONLY for runs the user explicitly opted out of review
       --hardlink        hardlink instead of copy (read-only analysis only:
                         a downstream writer would corrupt the original)
+
+delivery options
+      --out FILE        write the archive to FILE instead of the default
+                        OUT/<outdir-basename>-<date>.zip|tar.gz
   -h, --help
 USAGE
 }
@@ -105,7 +117,12 @@ while [[ $# -gt 0 ]]; do
     -t|--topic)     TOPIC="$2"; shift 2 ;;
     --since)        SINCE="$2"; shift 2 ;;
     --min-lines)    MIN_LINES="$2"; shift 2 ;;
-    -o|--out)       OUTDIR="$2"; shift 2 ;;
+    -o)             OUTDIR="$2"; shift 2 ;;
+    # `--out` is command-scoped. On scan/review/finalize/validate/package it is
+    # the documented synonym of `-o` (the working directory) and stays that way.
+    # `delivery` takes the buy-side contract's `--out FILE`, the name of the
+    # ARTIFACT it produces, so the two cannot be the same variable there.
+    --out)          if [[ "$CMD" == delivery ]]; then ARCHIVE_OUT="$2"; else OUTDIR="$2"; fi; shift 2 ;;
     --ui)           UI="$2"; shift 2 ;;
     --resume)       RESUME=1; shift ;;
     --from)         FROM="$2"; shift 2 ;;
@@ -185,6 +202,24 @@ stat_size() { # $1=file
   printf '%s' "$1"
 }
 
+# sha256 of a file as a bare hex digest, or "unavailable-no-sha256-tool" when
+# the platform ships neither sha256sum (GNU, Git Bash) nor shasum (macOS).
+# Probed once and cached so the per-file cost is the hash itself, not a
+# `command -v` per file. Both callers (finalize, delivery) go through here:
+# two copies of the probe would be two places for the probe to drift.
+sha256_of() { # $1=file
+  if [[ -z "${SHA_CMD:-}" ]]; then
+    if command -v sha256sum >/dev/null; then SHA_CMD="sha256sum"
+    elif command -v shasum  >/dev/null; then SHA_CMD="shasum -a 256"
+    else SHA_CMD=""; fi
+  fi
+  [[ -n "$SHA_CMD" ]] || { printf 'unavailable-no-sha256-tool'; return 0; }
+  # Deliberate word split: SHA_CMD is "shasum -a 256" on macOS and must expand
+  # into two argv entries.
+  # shellcheck disable=SC2086
+  $SHA_CMD "$1" 2>/dev/null | cut -d' ' -f1
+}
+
 # sed -i and awk regex escapes differ between GNU and BSD; keep one wrapper so
 # both spellings live in a single place.
 sed_inplace() { # $1=expression $2=file
@@ -246,7 +281,7 @@ cwd_of() { # $1=agent $2=file
 # ------------------------------------------------------------------- commands
 cmd="${CMD:-}"
 case "$cmd" in
-  scan|review|finalize|validate|package) ;;
+  scan|review|finalize|validate|package|delivery) ;;
   ""|-h|--help) usage; exit 0 ;;
   *) echo "unknown command: $cmd" >&2; usage; exit 2 ;;
 esac
@@ -636,17 +671,7 @@ if [[ "$cmd" == finalize ]]; then
     else
       cp -p -- "$f" "$dest"
     fi
-    # shasum ships with macOS; sha256sum with GNU and Git Bash. Probe once.
-    if [[ -z "${SHA_CMD:-}" ]]; then
-      if command -v sha256sum >/dev/null; then SHA_CMD="sha256sum"
-      elif command -v shasum  >/dev/null; then SHA_CMD="shasum -a 256"
-      else SHA_CMD=""; fi
-    fi
-    if [[ -n "$SHA_CMD" ]]; then
-      sha=$($SHA_CMD "$dest" | cut -d" " -f1)
-    else
-      sha="unavailable-no-sha256-tool"
-    fi
+    sha="$(sha256_of "$dest")"
     # jqd, not jq: every value below is transcript DATA. Under MSYS the plain
     # `jq` would have Git Bash rewrite `cwd`/`source` into Windows paths.
     # shellcheck disable=SC2016
@@ -697,5 +722,341 @@ if [[ "$cmd" == finalize ]]; then
     "'.[] | \"\\(.source)\\t\\(.kept_as)\"'" "$OUTDIR/manifest.json"
   # shellcheck disable=SC2016  # ${d%...} is literal text for the reader to paste
   printf '  while IFS=$\x27\\t\x27 read -r s d; do d="${d%%$\x27\\r\x27}"; cmp -s "$s" "$d" || echo "MISMATCH $s"; done < /tmp/pairs.tsv\n'
+  exit 0
+fi
+
+# ============================================================== delivery
+# One archive for the buyer: OUT/keep/ + OUT/manifest.json at the archive root.
+#
+# Why an archive at all: the partner has to hand the result over some channel,
+# and one file survives a channel that a directory does not. Why it carries the
+# MANIFEST rather than a checksum of itself: a checksum proves the transfer was
+# intact and says nothing about whether the contents match what was recorded.
+# The per-item sha256 that `finalize` already wrote is what makes the received
+# batch checkable — so the command verifies every one of them BEFORE packing
+# and reads the archive back AFTER.
+#
+# NOT `package`: that command writes OUT/open-review.sh, a launcher for the
+# human review step. Different job, earlier in the pipeline, unrelated file.
+if [[ "$cmd" == delivery ]]; then
+  OUTDIR_ABS="$(cd "$OUTDIR" 2>/dev/null && pwd)" \
+    || { echo "delivery: no such directory: $OUTDIR" >&2; exit 1; }
+  KEEP_ABS="$OUTDIR_ABS/keep"
+  MAN="$OUTDIR_ABS/manifest.json"
+
+  # ---------------------------------------------------------- refusal path
+  # An archive of nothing, or of half a corpus, looks successful to whoever
+  # receives it: it is a valid file with a valid checksum. Refuse instead, and
+  # name the piece that is missing so the operator knows which command to
+  # re-run. Every branch here exits non-zero before any file is written.
+  [[ -d "$KEEP_ABS" ]] || {
+    echo "delivery: nothing to package — keep/ is missing ($KEEP_ABS); run finalize first" >&2
+    exit 1
+  }
+  [[ -f "$MAN" ]] || {
+    echo "delivery: nothing to package — manifest.json is missing ($MAN); run finalize first" >&2
+    exit 1
+  }
+
+  # Every regular file under keep/, as paths relative to keep/.
+  # All scratch files live in $TMP: the EXIT trap set at the top already
+  # removes that directory on every exit path, including the refusals below.
+  keep_rel="$TMP/keep.rel"
+  ( cd "$KEEP_ABS" && find . -type f ) | sed 's#^\./##' | awk 'NF' | sort > "$keep_rel"
+  n_keep="$(awk 'END { print NR }' "$keep_rel")"
+  [[ "$n_keep" -gt 0 ]] || {
+    echo "delivery: nothing to package — keep/ contains no files ($KEEP_ABS); run finalize first" >&2
+    exit 1
+  }
+
+  jq -e 'type == "array"' "$MAN" >/dev/null 2>&1 || {
+    echo "delivery: $MAN is not a JSON array — refusing to package it" >&2
+    exit 1
+  }
+  n_items="$(jq 'length' "$MAN")"
+  [[ "$n_items" -gt 0 ]] || {
+    echo "delivery: nothing to package — manifest.json lists 0 sessions ($MAN)" >&2
+    exit 1
+  }
+
+  # ------------------------------------------------- pre-pack verification
+  # Manifest -> keep/: every recorded session must be present under its own
+  # recorded path AND hash to its recorded sha256. This is the check that makes
+  # the archive meaningful; it runs before anything is packed, so a corrupted
+  # corpus is never handed over as a file someone can trust.
+  pairs="$TMP/pairs.tsv"
+  jq -r '.[] | "\(.kept_as // "")\t\(.sha256 // "")"' "$MAN" > "$pairs"
+  listed="$TMP/listed.txt"
+  : > "$listed"
+  bad=0
+  while IFS=$'\t' read -r ka sha; do
+    ka="${ka%$'\r'}"; sha="${sha%$'\r'}"
+    if [[ -z "$ka" || -z "$sha" ]]; then
+      echo "  ! manifest entry with no kept_as/sha256 — cannot be verified" >&2
+      bad=$((bad + 1)); continue
+    fi
+    # kept_as must live under THIS keep/: a manifest pointing anywhere else
+    # describes a corpus that is not the one being packed.
+    case "$ka" in
+      "$KEEP_ABS"/*) ;;
+      *) echo "  ! outside keep/: $ka" >&2; bad=$((bad + 1)); continue ;;
+    esac
+    rel="${ka#"$KEEP_ABS"/}"
+    if [[ ! -f "$ka" ]]; then
+      echo "  ! missing from keep/: $rel" >&2; bad=$((bad + 1)); continue
+    fi
+    if [[ "$(sha256_of "$ka")" != "$sha" ]]; then
+      echo "  ! sha256 mismatch: $rel (recorded $sha)" >&2
+      bad=$((bad + 1)); continue
+    fi
+    printf '%s\n' "$rel" >> "$listed"
+  done < "$pairs"
+
+  # keep/ -> manifest: a file with no manifest entry would ship as a corpus
+  # member nobody can check. Both directions are needed for "the received batch
+  # is checkable", so both are checked.
+  if [[ -s "$listed" ]]; then sort -o "$listed" "$listed"; fi
+  unlisted="$(comm -23 "$keep_rel" "$listed" | awk 'NF')"
+  if [[ -n "$unlisted" ]]; then
+    printf '  ! in keep/ but not in the manifest:\n' >&2
+    printf '%s\n' "$unlisted" | sed 's/^/      /' >&2
+    bad=$((bad + $(printf '%s\n' "$unlisted" | awk 'END { print NR }')))
+  fi
+  [[ "$bad" -eq 0 ]] || {
+    echo "delivery: $bad problem(s) in the corpus — refusing to package it" >&2
+    exit 1
+  }
+
+  # --------------------------------------------------------- format choice
+  # Format follows the PLATFORM, because the partner's extraction tool follows
+  # theirs and we never see the receiving side. MSYS/Cygwin is Windows even
+  # when the shell looks POSIX.
+  case "${OSTYPE:-}" in
+    msys*|cygwin*|win32) PLATFORM=windows ;;
+    *)                   PLATFORM=posix ;;
+  esac
+  [[ -n "${MSYSTEM:-}" ]] && PLATFORM=windows
+  if [[ "$PLATFORM" == windows ]]; then FMT=zip; else FMT=tar.gz; fi
+  why="platform: $PLATFORM"
+
+  # An explicit name carrying a known archive suffix OVERRIDES the platform
+  # choice. Writing a tar.gz under a `.zip` name is the one way this command
+  # could hand over an archive whose extension lies about its contents, and a
+  # named file is exactly the case where the operator has made the choice
+  # themselves — the platform rule exists for the operator who has not.
+  if [[ -n "$ARCHIVE_OUT" ]]; then
+    case "$ARCHIVE_OUT" in
+      *.zip)          FMT=zip;    why="from --out .zip" ;;
+      *.tar.gz|*.tgz) FMT=tar.gz; why="from --out .${ARCHIVE_OUT##*.}" ;;
+    esac
+  fi
+
+  # ------------------------------------------------- archive writer ladder
+  # The writer is probed by BEHAVIOUR, not by name, because the obvious name
+  # lies: Git Bash ships GNU tar, whose `-a -cf x.zip` exits 0 and writes a
+  # POSIX TAR — a `.zip` that `unzip` refuses. So each candidate is asked to
+  # produce the file and the result is then checked for the format's magic
+  # bytes; a candidate that produces the wrong bytes is not accepted.
+  # bsdtar is the one tar that writes real zip files. Prefer the PATH copy; on
+  # MSYS the Windows-bundled one is reachable through SYSTEMROOT. There is no
+  # /mnt/c fallback on purpose: that is WSL reaching across to the Windows
+  # side's toolchain, which is a different machine's business.
+  find_zip_writer() {
+    if command -v bsdtar >/dev/null 2>&1; then command -v bsdtar; return 0; fi
+    local root
+    if [[ -n "${SYSTEMROOT:-}" ]] && command -v cygpath >/dev/null 2>&1; then
+      root="$(cygpath -u "$SYSTEMROOT" 2>/dev/null)"
+      [[ -x "$root/System32/tar.exe" ]] && { printf '%s' "$root/System32/tar.exe"; return 0; }
+    fi
+    return 1
+  }
+
+  magic_ok() { # $1=file $2=zip|gz
+    local m
+    m="$(od -An -tx1 -N2 "$1" 2>/dev/null | tr -d ' \n')"
+    case "$2" in
+      zip) [[ "$m" == "504b" ]] ;;
+      gz)  [[ "$m" == "1f8b" ]] ;;
+      *)   return 1 ;;
+    esac
+  }
+
+  # Pick the writer in THIS shell, before any subshell runs: the report has to
+  # name the tool that produced the artifact, and an assignment made inside the
+  # staging subshell would not survive to it.
+  #
+  # Preference order per format, each step a real tool on a real platform:
+  #   zip     Info-ZIP `zip` (Windows Git Bash, most Linux distros)
+  #        -> bsdtar       (the one tar that writes real zips; on MSYS it is
+  #                         C:\Windows\System32\tar.exe, reached via SYSTEMROOT)
+  #   tar.gz  `tar -czf`    (GNU or BSD, everywhere)
+  # NOT `tar -a -c -f x.zip`, which the issue text suggested: on GNU tar 1.35
+  # that exits 0 and writes a POSIX tar whose first bytes are `6b 65`, a file
+  # named `.zip` that `unzip` refuses. Measured on this machine, both ways. The
+  # magic-byte check below exists because that failure is silent at exit 0.
+  WRITER=""; WKIND=""; ZW_BIN=""
+  case "$FMT" in
+    zip)
+      if command -v zip >/dev/null 2>&1; then
+        WKIND=zip; WRITER="zip (Info-ZIP)"
+      elif ZW_BIN="$(find_zip_writer)"; then
+        WKIND=bsdtar; WRITER="$ZW_BIN -a -cf (bsdtar)"
+      else
+        echo "delivery: no zip writer on this platform (install Info-ZIP 'zip', or take the default .tar.gz)" >&2
+        exit 1
+      fi ;;
+    tar.gz)
+      WKIND=tar
+      WRITER="tar -czf ($(tar --version 2>/dev/null | awk 'NR==1 { print $1, $NF; exit }'))" ;;
+  esac
+
+  write_archive() { # $1=stage-path ; cwd MUST be the corpus root
+    case "$WKIND" in
+      zip)    zip -q -r -X "$1" keep manifest.json || return 1
+              magic_ok "$1" zip || {
+                echo "delivery: the zip writer produced a non-zip file — refusing to ship it" >&2
+                return 1
+              } ;;
+      bsdtar) # --no-mac-metadata keeps the members to exactly what was asked for.
+              "$ZW_BIN" -a --no-mac-metadata -cf "$1" keep manifest.json || return 1
+              magic_ok "$1" zip || {
+                echo "delivery: bsdtar produced a non-zip file — refusing to ship it" >&2
+                return 1
+              } ;;
+      tar)    tar -czf "$1" keep manifest.json || return 1
+              magic_ok "$1" gz || {
+                echo "delivery: tar produced something that is not gzip — refusing to ship it" >&2
+                return 1
+              } ;;
+    esac
+  }
+
+  # Four readers deep, because the property being checked is "this archive is
+  # readable by the machine that receives it" and no single tool exists on
+  # every platform: Windows Git Bash has unzip and no bsdtar, a bare Linux box
+  # may have neither and only python3. Each candidate is tried in turn.
+  #
+  # python3 is last and is probed by EXECUTING it, not by `command -v`: on
+  # Windows, `python3` in PATH is frequently the Microsoft Store app-execution
+  # alias — a stub that prints "Python was not found" and exits 49. It is a
+  # real file at a real path, so a presence check passes while every call
+  # fails, and because the failure is on stderr a naive `| grep` would still
+  # see the empty stdout as "no members". Requiring a successful no-op call
+  # tells the real interpreter from the alias. Measured on this machine:
+  # /c/Users/…/WindowsApps/python3 -> rc=49, "Python was not found".
+  have_python3() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -c '' >/dev/null 2>&1
+  }
+
+  zip_names() { # $1=archive
+    if command -v unzip >/dev/null 2>&1; then unzip -Z1 "$1" 2>/dev/null && return 0; fi
+    if command -v zipinfo >/dev/null 2>&1; then zipinfo -1 "$1" 2>/dev/null && return 0; fi
+    local zw
+    if zw="$(find_zip_writer)"; then "$zw" -tf "$1" 2>/dev/null && return 0; fi
+    if have_python3; then
+      python3 - "$1" <<'PY' && return 0
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    for name in z.namelist():
+        print(name)
+PY
+    fi
+    return 1
+  }
+
+  list_members() { # $1=archive
+    case "$FMT" in
+      zip)    zip_names "$1" ;;
+      tar.gz) tar -tzf "$1" ;;
+    esac
+  }
+
+  # ------------------------------------------------------------ name + write
+  # Default name: OUT/<outdir-basename>-<date>.<fmt>. Dated because a partner
+  # sends batches over time and two undated files in one channel directory
+  # would be indistinguishable.
+  if [[ -n "$ARCHIVE_OUT" ]]; then
+    target="$ARCHIVE_OUT"
+  else
+    target="$OUTDIR_ABS/$(basename "$OUTDIR_ABS")-$(date +%Y%m%d).$FMT"
+  fi
+  tdir="$(dirname "$target")"
+  tbase="$(basename "$target")"
+  [[ -d "$tdir" ]] || { echo "delivery: no such directory: $tdir" >&2; exit 1; }
+  target_abs="$(cd "$tdir" && pwd)/$tbase"
+
+  # Stage under a fresh name in TMP and move into place. Two reasons, both
+  # load-bearing: Info-ZIP APPENDS to an existing archive, so a re-run over the
+  # same OUTDIR would carry the previous run's members forward (exactly the
+  # stale-member bug this is meant not to have); and a failure mid-write must
+  # never leave a half archive at the path the operator was told to send.
+  stage="$TMP/delivery.$$.$FMT"
+  rm -f "$stage"
+  ( cd "$OUTDIR_ABS" && write_archive "$stage" ) || { rm -f "$stage"; exit 1; }
+  [[ -s "$stage" ]] || { echo "delivery: archive is empty — not shipping it" >&2; rm -f "$stage"; exit 1; }
+
+  # ------------------------------------------------- read the archive back
+  # What the writer claims it did is not evidence; what a reader finds inside
+  # is. Check the members against the corpus that went in: the exact file set,
+  # no strays, and the manifest present.
+  acts="$TMP/archive.members"
+  list_members "$stage" | tr -d '\r' | awk 'NF' | sort > "$acts" \
+    || { echo "delivery: cannot read back $stage" >&2; rm -f "$stage"; exit 1; }
+
+  exp="$TMP/expected.members"
+  sed 's#^#keep/#' "$keep_rel" > "$exp"
+  printf '%s\n' manifest.json >> "$exp"
+  sort -o "$exp" "$exp"
+
+  # File members only: whether a writer also records the `keep/` directory
+  # entry is a writer detail, not a property of the delivery.
+  act_files="$TMP/archive.files"
+  awk '$0 !~ /\/$/' "$acts" > "$act_files"
+  n_files="$(awk 'END { print NR }' "$act_files")"
+  n_exp="$(awk 'END { print NR }' "$exp")"
+
+  rbad=0
+  if [[ "$n_files" -ne "$n_exp" ]]; then
+    echo "  ! archive holds $n_files file member(s), corpus has $n_exp" >&2
+    rbad=$((rbad + 1))
+  fi
+  # Set equality, both directions, each named separately: a stray member means
+  # the archive unpacks into a scatter of files rather than one directory, and
+  # a missing one means the batch is incomplete. `keep/` itself is excluded
+  # above, so what is compared is the file set and nothing else.
+  stray="$(comm -13 "$exp" "$act_files" | awk 'NF')"
+  missing="$(comm -23 "$exp" "$act_files" | awk 'NF')"
+  if [[ -n "$stray" ]]; then
+    echo "  ! archive members not in the corpus:" >&2
+    printf '%s\n' "$stray" | sed 's/^/      /' >&2
+    rbad=$((rbad + $(printf '%s\n' "$stray" | awk 'END { print NR }')))
+  fi
+  if [[ -n "$missing" ]]; then
+    echo "  ! corpus files absent from the archive:" >&2
+    printf '%s\n' "$missing" | sed 's/^/      /' >&2
+    rbad=$((rbad + $(printf '%s\n' "$missing" | awk 'END { print NR }')))
+  fi
+  grep -Fxq -- 'manifest.json' "$act_files" || {
+    echo "  ! the archive has no manifest.json — it cannot be checked against anything" >&2
+    rbad=$((rbad + 1))
+  }
+  [[ "$rbad" -eq 0 ]] || {
+    echo "delivery: the archive does not match the corpus — not shipping it" >&2
+    rm -f "$stage"; exit 1
+  }
+
+  mv -f "$stage" "$target_abs" || { echo "delivery: cannot write $target_abs" >&2; rm -f "$stage"; exit 1; }
+
+  echo "delivery: $n_keep session(s) + manifest.json"
+  echo "  format:  $FMT  ($why)"
+  echo "  writer:  $WRITER"
+  echo "  verify:  $n_items/$n_items manifest entries present and sha256-matched"
+  echo "  read back: $n_files member(s), matching the corpus exactly"
+  echo "  archive: $target_abs"
+  echo "  bytes:   $(stat_size "$target_abs")"
+  echo "  files:   $((n_keep + 1)) ($n_keep sessions + manifest.json)"
+  echo "  members:"
+  list_members "$target_abs" | tr -d '\r' | awk 'NF' | sed 's/^/    /'
   exit 0
 fi

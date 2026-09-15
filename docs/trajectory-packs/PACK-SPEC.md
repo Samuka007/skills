@@ -142,6 +142,27 @@ One archive containing the kept session files verbatim plus a manifest. The
 archive format follows the platform (`zip` on Windows, `tar.gz` elsewhere) and
 the command picks it; the partner does not.
 
+How the format is actually produced, measured rather than assumed — because
+"zip on Windows" is not implementable as stated on a real Git Bash:
+
+| Wanted | Rung, in order | Writes |
+|---|---|---|
+| `zip` | Info-ZIP `zip` on PATH | a real zip |
+| `zip` | `bsdtar` — PATH, else `%SYSTEMROOT%\System32\tar.exe` | a real zip |
+| `tar.gz` | `tar -czf` (GNU or BSD) | gzip |
+
+`tar -a -c -f x.zip` is deliberately **not** a rung. On GNU tar 1.35 — the tar
+in Git Bash, which is not bsdtar — it exits 0 and writes a POSIX tar whose first
+bytes are `6b 65`: a file named `.zip` that `unzip` refuses. The failure is
+silent at exit 0, so the command checks each rung's output for its format's
+magic bytes (`504b` zip, `1f8b` gzip) and refuses the archive when they do not
+match, rather than trusting the writer's exit status. The tool that ran is
+printed as `writer:` so a batch can be attributed to one without inference.
+
+An `--out` name ending in `.zip`, `.tar.gz` or `.tgz` selects that format over
+the platform default; a name with no recognised suffix does not, since an
+extension nothing infers from cannot mislead a reader about the contents.
+
 The manifest is a mapping, kept simple:
 
 ```json
