@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# End-to-end over the deterministic direction runner
+# (skills/agent-session-batch-export/scripts/export-direction.sh).
+#
+# Every check here is a contract a plausible bug would break, and two of them
+# already did during implementation:
+#
+#   * decisions.tsv is ten columns with the three verdict columns FIRST. The
+#     first version of the runner wrote nine in the wrong order and finalize
+#     refused the batch.
+#   * one `sk-ant-…` key was counted twice and reported under two vendors,
+#     because the openai_key pattern also matched it.
+#
+# Fixtures rather than the real stores: this must give the same answer on any
+# machine, and a test that reads ~/.codex says nothing repeatable about the
+# runner. The one real-data assertion lives in codex-translation-windows.sh.
+set -uo pipefail
+
+REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
+SKILL="$REPO/skills/agent-session-batch-export"
+RUNNER="$SKILL/scripts/export-direction.sh"
+DIRJSON="$REPO/skills/session-export-nocode/direction.json"
+W="${1:-/tmp/session-export-base-e2e}"
+
+pass=0; fail=0
+chk() { # label want got
+  if [[ "$2" == "$3" ]]; then printf '  ok   %s\n' "$1"; pass=$((pass + 1))
+  else printf '  FAIL %s\n         want %q\n         got  %q\n' "$1" "$2" "$3"; fail=$((fail + 1)); fi
+}
+has() { # label haystack needle
+  if [[ "$2" == *"$3"* ]]; then printf '  ok   %s\n' "$1"; pass=$((pass + 1))
+  else printf '  FAIL %s\n         %q not in output\n' "$1" "$3"; fail=$((fail + 1)); fi
+}
+lacks() {
+  if [[ "$2" != *"$3"* ]]; then printf '  ok   %s\n' "$1"; pass=$((pass + 1))
+  else printf '  FAIL %s\n         %q unexpectedly present\n' "$1" "$3"; fail=$((fail + 1)); fi
+}
+
+command -v jq >/dev/null 2>&1 || { echo "session-export-base-e2e: needs jq"; exit 1; }
+python3 -c '' >/dev/null 2>&1 || { echo "session-export-base-e2e: needs a working python3"; exit 1; }
+
+rm -rf "$W"; mkdir -p "$W"
+H="$W/home"
+S="$H/.codex/sessions/2026/09/15"
+mkdir -p "$S" "$H/.claude/projects/demo"
+
+# A codex session needs a session_meta line: scan reads cwd from it and skips
+# any file where cwd is empty (curate-sessions.sh). A fixture without it is
+# invisible, which looks exactly like a broken funnel.
+meta='{"type":"session_meta","payload":{"cwd":"/home/demo/notes","model_provider":"OpenAI"}}'
+mkcodex() { # name  user-text
+  { printf '%s\n' "$meta"
+    printf '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":%s}]}}\n' "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$2")"
+    printf '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"ok"}]}}\n'
+  } > "$S/rollout-$1.jsonl"
+}
+
+# One-shot translation: the case the family exists to buy. Its whole request is
+# eleven characters and the work is in the answer.
+mkcodex oneshot '翻译 桃花源记 为日文'
+# Coding work that also says "翻译". A positive keyword list selects it; the
+# noncode stage is what rejects it.
+mkcodex coding  '帮我重构这个模块并修复报错，翻译一下注释'
+# Zero real user turns: only an injected context block. Must reach later stages
+# rather than being filed as "unparseable".
+mkcodex zeroturn '<environment_context><cwd>/x</cwd></environment_context>'
+
+run() { # outdir extra-args...
+  local out="$1"; shift
+  rm -rf "$out"
+  HOME="$H" bash "$RUNNER" --direction-file "$DIRJSON" -o "$out" "$@" 2>&1
+}
+
+echo "== the funnel decides, and it decides the same way twice =="
+o1="$(run "$W/r1" --yolo)"; rc1=$?
+chk "a clean run succeeds" "0" "$rc1"
+has "the report says there was no screening step" "$o1" "no screening step"
+has "the coding session dies at the noncode stage" "$o1" "L7 noncode"
+# The zero-turn fixture must not be killed by the turn floor: min_user_turns is
+# 0 in this family, and a parser returning None for it would have filed it as an
+# unreadable file instead.
+#
+# The invariant is that NO turn row kills anything, so that is what is asserted.
+# The expected row count is derived from the theme files rather than written
+# here, because a hard-coded count would fail the day a theme is added — which
+# would say nothing about the turn floor.
+selecting="$(jq -r --slurpfile d "$DIRJSON" -n \
+  '$d[0].themes[]' | while read -r t; do
+     [[ "$(jq -r '.report_only // false' "$SKILL/themes/$t.json")" == "true" ]] || echo "$t"
+   done | wc -l | tr -d ' ')"
+chk "the turn stage ran once per selecting theme" "$selecting" \
+  "$(printf '%s\n' "$o1" | grep -cE '^L1 turns ')"
+chk "and the turn floor killed nothing" "0" \
+  "$(printf '%s\n' "$o1" | grep -cE '^L1 turns .* killed [1-9]')"
+lacks "and nothing was reported unparseable" "$o1" "unparseable"
+
+sel() { jq -r '[.[] | {s: .source, h: .sha256, t: (.themes // [] | sort)}] | sort_by(.s)' "$1/manifest.json"; }
+run "$W/r2" --yolo >/dev/null; chk "a second run succeeds" "0" "$?"
+chk "same selection and same hashes" "$(sel "$W/r1")" "$(sel "$W/r2")"
+
+echo
+echo "== the selection is installed, not suggested =="
+# Ten columns, verdict first. This is the shape review --ui tsv writes and
+# finalize reads; getting it wrong fails the run, so it is worth pinning.
+hdr="$(head -1 "$W/r1/decisions.tsv")"
+chk "decisions.tsv has ten columns" "10" "$(awk -F'\t' 'NR==1{print NF}' "$W/r1/decisions.tsv")"
+chk "and the verdict columns come first" "decision	reason	suggested" \
+  "$(printf '%s' "$hdr" | cut -f1-3)"
+chk "every row is a keep" "0" \
+  "$(awk -F'\t' 'NR>1 && $1 != "keep"' "$W/r1/decisions.tsv" | wc -l | tr -d ' ')"
+has "and says the funnel chose it" "$(sed -n '2p' "$W/r1/decisions.tsv")" "selected by the funnel"
+# No screening step exists on this path, so there is no row for an agent to
+# fill — which is the difference between this and the interactive pipeline.
+chk "no screen.tsv is produced" "absent" \
+  "$(test -e "$W/r1/screen.tsv" && echo present || echo absent)"
+
+echo
+echo "== copies are byte-identical and the manifest says how they were chosen =="
+# Python recomputes the bytes and the digest; jq reads the JSON fields, so a
+# Python bool never reaches a comparison against JSON's `false`.
+python3 - "$W/r1/manifest.json" > "$W/verify.txt" <<'PY'
+import hashlib, json, pathlib, sys
+m = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+bad = [e for e in m
+       if pathlib.Path(e["source"]).read_bytes() != pathlib.Path(e["kept_as"]).read_bytes()
+       or hashlib.sha256(pathlib.Path(e["source"]).read_bytes()).hexdigest() != e["sha256"]]
+print(len(m), len(bad), sep="\t")
+PY
+IFS=$'\t' read -r n_entries n_bad < "$W/verify.txt"
+chk "the one-shot translation was exported" "1" "$n_entries"
+chk "bytes and sha256 both match the original" "0" "$n_bad"
+chk "the manifest records how it was selected" "funnel-deterministic" \
+  "$(jq -r '.[0].selection' "$W/r1/manifest.json")"
+chk "and that no human confirmed the batch (--yolo)" "false" \
+  "$(jq -r '.[0].batch_confirmed' "$W/r1/manifest.json")"
+
+echo
+echo "== credentials refuse the batch, and only an explicit flag proceeds =="
+mkcodex leak '翻译这段文本 sk-ant-abcdefghij0123456789'
+o3="$(run "$W/cred" --yolo)"; chk "a credential hit refuses" "3" "$?"
+has "the refusal says so" "$o3" "refusing the batch"
+has "and names the flag that overrides it" "$o3" "--allow-credentials"
+# Nothing may be left behind: a half-written directory would let a caller
+# mistake a refusal for a delivery.
+chk "and writes nothing at all" "absent" \
+  "$(test -e "$W/cred" && echo present || echo absent)"
+
+o4="$(run "$W/allow" --yolo --allow-credentials)"; chk "the explicit flag proceeds" "0" "$?"
+has "with a warning that they will be exported" "$o4" "WILL be exported"
+chk "the manifest records the decision" "true" "$(jq -r '.[0].allow_credentials' "$W/allow/manifest.json")"
+# One key, one hit. Two overlapping patterns previously counted it twice and
+# reported it under two vendors; an inflated disclosure is worse than none
+# because the reader cannot tell it is wrong.
+chk "one key counts once" "1" "$(jq -r '.[0].credential_hits' "$W/allow/manifest.json")"
+chk "under one vendor name" "anthropic_key" \
+  "$(HOME="$H" python3 "$SKILL/scripts/funnel.py" enrich "$W/allow/candidates.full.tsv" "$W/enr.tsv" >/dev/null 2>&1
+     awk -F'\t' 'NR==1{for(i=1;i<=NF;i++)h[$i]=i;next} $h["credential_kinds"]!=""{print $h["credential_kinds"]}' "$W/enr.tsv" | sort -u)"
+rm -f "$S/rollout-leak.jsonl"
+
+echo
+echo "== a direction may name themes and nothing else =="
+# A threshold in a direction file is a second copy of a number the theme
+# already owns, which is the drift the layering exists to prevent.
+jq '. + {policy: {min_user_turns: 9}}' "$DIRJSON" > "$W/bad-policy.json"
+o5="$(HOME="$H" bash "$RUNNER" --direction-file "$W/bad-policy.json" -o "$W/x" --yolo 2>&1)"
+chk "a policy key is refused" "2" "$?"
+has "and says where thresholds belong" "$o5" "belong in a theme"
+
+jq '.themes = ["translation", "no-such-theme"]' "$DIRJSON" > "$W/bad-theme.json"
+o6="$(HOME="$H" bash "$RUNNER" --direction-file "$W/bad-theme.json" -o "$W/y" --yolo 2>&1)"
+chk "an unknown theme is refused" "2" "$?"
+has "and names the file it looked for" "$o6" "no-such-theme.json"
+
+echo
+echo "== a report-only theme is counted, never selected =="
+# multimodal has an empty keyword list, so its topic stage passes everything.
+# Folding it into the union would select the entire scan under a theme that
+# exists only to report counters.
+chk "multimodal reports n/a rather than a count" "null" \
+  "$(jq -r '.[0].theme_counts.multimodal' "$W/r1/manifest.json")"
+chk "and no exported session claims it" "0" \
+  "$(jq -r '[.[] | select((.themes // []) | index("multimodal"))] | length' "$W/r1/manifest.json")"
+
+echo
+printf 'SESSION-EXPORT-BASE E2E: %s (%d passed' \
+  "$([[ "$fail" -eq 0 ]] && echo "ALL CHECKS PASSED" || echo "$fail FAILED")" "$pass"
+[[ "$fail" -gt 0 ]] && printf ', %d failed' "$fail"
+printf ')\n'
+[[ "$fail" -eq 0 ]] || exit 1
