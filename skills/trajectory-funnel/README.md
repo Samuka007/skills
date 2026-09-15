@@ -22,7 +22,7 @@ enriched candidates TSV this script prints.
 > third-party dependencies: Python 3 standard library only, runs anywhere
 > `python3` runs, streaming (one session file in memory at a time).
 
-## The six stages
+## The seven stages
 
 Cheap stages run before expensive ones: metadata → line scan → JSON parse.
 
@@ -30,13 +30,52 @@ Cheap stages run before expensive ones: metadata → line scan → JSON parse.
 |---|---|---|
 | L1 turns | user-turn floor | greeting stubs ("hi") |
 | L2 tool_ratio | assistant tool_use share ceiling | tool-heavy coding runs when the interest is prose |
-| L3 end_turn | last assistant `stop_reason == end_turn` | truncated sessions ending mid-tool-call |
-| L4 length | user-message length distribution | scaffold noise (huge first prompt, tiny real request) |
-| L5 topic | keyword/regex over extracted user prose | off-topic sessions (the only stage reading message bodies) |
-| L6 dedup | 5-gram Jaccard over first user messages, cross-row | near-duplicate template clusters (keeps the longest) |
+| L3 signature | thinking-signature ratio floor, **off by default** | sessions whose thinking blocks carry no signature (a relay or client stripped it) |
+| L4 end_turn | last assistant `stop_reason == end_turn` | truncated sessions ending mid-tool-call |
+| L5 length | user-message length distribution | scaffold noise (huge first prompt, tiny real request) |
+| L6 topic | keyword/regex over extracted user prose | off-topic sessions (the only stage reading message bodies) |
+| L7 dedup | 5-gram Jaccard over first user messages, cross-row | near-duplicate template clusters (keeps the longest) |
 
-Every stage reports `(in, out, killed, reason)` — the printed funnel table
-is the only decision surface you need for re-tuning.
+Every stage reports `(in, out, killed, skipped, reason)` — the printed funnel
+table is the only decision surface you need for re-tuning.
+
+### L3 signature: measured per session, gated by the pack
+
+`trajectory-funnel` reads what the session file says; the threshold is
+[`docs/trajectory-packs/PACK-SPEC.md`](../../docs/trajectory-packs/PACK-SPEC.md)
+§ 4 and comes in through the pack, never from this code.
+
+**The stage is off unless the pack sets `sig_ratio_min`.** No preset sets one,
+so a run that does not ask for the layer behaves exactly as it did before it
+existed — and the printed table says `OFF` in that row, so a stage that never
+ran cannot be misread as one that ran and passed everything. Turn it on with:
+
+```bash
+python3 scripts/funnel.py run /tmp/cur/candidates.tsv /tmp/cur/.unused --in-place \
+  --preset report --sig-ratio-min 0.30
+```
+
+Each session lands in one of three states, and the difference is the point:
+
+| State | What the file shows | Verdict |
+|---|---|---|
+| `present` | thinking blocks with a non-empty `signature` | the ratio decides |
+| `empty` | thinking blocks whose `signature` is `""` | fails the floor |
+| `absent` | no thinking block at all — codex, or a client that never requested thinking | **skipped**, and the skip is recorded |
+
+`empty` is not the same finding as `absent`. Anthropic returns `signature`
+regardless of the `display` setting, so an empty signature means something in
+the path removed it — a batch where every claude_code session reports `empty`
+is a fact about the partner's relay, not about the model. Codex has no
+`signature` field at all, so failing it would reject every codex session from a
+purchase that explicitly covers both formats; it skips instead. `redacted_thinking`
+is a safety-redaction block with no signature and is **not** a thinking block
+here — a session carrying only redacted blocks reports `absent`, so it stays
+distinguishable from one that was stripped.
+
+`enrich` carries the same measurement as columns (`thinking_blocks`,
+`signature_present`, `signature_empty`, `signature_ratio`, `signature_state`,
+`redacted_blocks`) so the distribution can be seen before exporting.
 
 ## Presets
 
@@ -84,7 +123,8 @@ python3 "$F" run "$OUT/candidates.tsv" "$OUT/.unused" --in-place \
 ```
 
 Subcommands: `run` (filter), `enrich` (add computed columns — turns, tool
-counts, last stop reason, chars — without filtering), `presets` (list them).
+counts, last stop reason, chars, signature state — without filtering),
+`presets` (list them).
 
 ## Demo
 
@@ -109,9 +149,12 @@ repo-only `docs/` directory:
 ## Design rules (do not violate when extending)
 
 - Python standard library only; streaming, never the whole corpus.
-- Every stage reports `(in, out, killed, reason)`.
+- Every stage reports `(in, out, killed, skipped, reason)`, and a `skip` stays
+  distinguishable from a pass.
 - Cheap stages before expensive ones: metadata < line scan < JSON parse.
 - Unknown session formats are **skipped and counted**, never guessed.
+- Thresholds are policy and live in the pack; a stage that needs one is gated
+  off until the pack supplies it, and says `OFF` when it did not run.
 - Output stays compatible with the existing `screen.tsv` contract
   (candidates columns + `suggested` + `reason`).
 

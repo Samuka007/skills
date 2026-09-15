@@ -609,7 +609,7 @@ def run_funnel(rows: list[dict], p: dict) -> tuple[list[dict], list[tuple[str, s
         # would hide exactly the distinction this column exists to show.
         lines = textwrap.wrap(r.reason, width - col) if r.reason else [""]
         for i, ln in enumerate(lines):
-            print(f"{head:<{col}} {ln}" if i == 0 else " " * col + " " + ln)
+            print((f"{head:<{col}} {ln}" if i == 0 else " " * col + " " + ln).rstrip())
         prev = r.survivors
     if unparseable:
         print(
