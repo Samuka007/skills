@@ -25,9 +25,40 @@ at from here.
 | 9 | demo renders on GitHub | **done** | commit `f5fc821` (`docs/agent-session-batch-export/demo.gif`, 209 KiB, regenerable byte-identically via `agg`); GitHub's rendered HTML carries `<img src="…/raw/master/docs/…/demo.gif">` and the raw URL answers `content-type: image/gif`, 213680 bytes |
 | 10 | repair the interactive suites | **done** | commit `08f10f1`; all suites green; `test-pick-tmux.sh` 1/8 → 16/16 |
 | 11 | README: document `--yolo` | **done** | commit `cde2224` (issue #8, auto-closed); `### No-review export: --yolo` under Quickstart; statement-by-statement cross-check against SKILL.md § Escape clause found no disagreement; `test/yolo-e2e.sh` re-run green |
+| 12 | buy-side pack family: design + specification | **in progress** | `docs/trajectory-packs/DESIGN.md` (layering, direction/theme packs, two run flows) and `docs/trajectory-packs/PACK-SPEC.md` (themes, layers, signature rule, manifest shape, deviations). Canonical copies live in those two files — the items below implement them |
+| 13 | mechanism: thinking-signature stage, three-state | **pending** | needs `signature: present/empty/absent` + `signature_ratio` per session; claude_code reads `message.content[].signature`, codex reports `absent` and the layer records a skip |
+| 14 | mechanism: codex closure layer is skipped, not failed | **pending** | codex has no `stop_reason`; the layer must record the skip so it cannot be read as a pass |
+| 15 | pack skill + driver (`trajectory-packs`) | **pending** | direction/theme pack JSON, `pack-export.sh` expanding a pack into funnel flags + driving finalize, pre-export volume report |
+| 16 | delivery archive command | **pending** | `curate-sessions.sh delivery`: keep/ + manifest → one archive (`zip` on Windows, `tar.gz` elsewhere) + per-item sha256 |
 
 ## Decisions and constraints (apply to all future items)
 
+- **Where each kind of truth lives (single source of truth).** Three things,
+  three homes, never restated elsewhere:
+  - **Buy-side numbers and口径** → `docs/trajectory-packs/PACK-SPEC.md`, and the
+    pack JSON files it describes. A theme skill points at them; it does not
+    repeat a threshold in prose.
+  - **Family layout and layering** → `docs/trajectory-packs/DESIGN.md`.
+  - **Item status, acceptance evidence, and decisions taken after an issue was
+    written** → this file, plus the issue body for the canonical requirement.
+  A number in two places is a drift waiting to happen. When a theme skill needs
+  to state a threshold it names the pack key, not the value.
+- **Signature is measured where the field exists, skipped where it does not.**
+  Anthropic's documentation is explicit that a thinking block always carries
+  `signature`, independent of `display`; an empty signature therefore means a
+  client or relay stripped it, not that the model produced none. Measured
+  locally: a WSL claude_code session on `claude-opus-5` carries 384-character
+  signatures, a sibling session on `claude-opus-4-8-fast` carries empty ones
+  while its thinking text is intact, and codex has no signature field at all.
+  So: `empty` fails the ratio gate, `absent` skips it and says so. Details and
+  the recorded reconciliation are in `PACK-SPEC.md` § 4.
+- **Volume is reported, never gated.** A partner sees the qualifying count per
+  theme before exporting and decides whether the job is worth running. A hard
+  minimum wastes their time on a run that was never going to be accepted.
+- **Credentials: detect and stop, never redact.** Redaction would break the
+  byte-identity guarantee the delivery rests on. The interactive flow leaves
+  flagged rows unselected; the unattended flow reports the count and requires an
+  explicit `--allow-credentials` to proceed.
 - **The interactive path is verified by driving a real TUI, on the platform it
   ships to.** Not optional, and not substitutable:
   - **Windows** — drive the real picker through **zellij** (`--test-spawn
