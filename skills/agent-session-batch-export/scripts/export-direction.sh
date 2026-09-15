@@ -112,26 +112,80 @@ done
 # deterministic funnel is the whole point of a direction run, and a semantic
 # fallback would replace a reproducible selection with an unreproducible one.
 #
-# Probe by EXECUTING. On Windows `python3` in PATH is frequently the Microsoft
-# Store app-execution alias: a real file at a real path that exits 49 printing
-# "Python was not found", so `command -v` succeeds while every call fails.
-# Measured on this machine: python3 and python are both that stub, py is absent.
-if ! python3 -c '' >/dev/null 2>&1; then
+# RESOLVE an interpreter rather than assuming one spelling. Measured on Windows
+# after `winget install Python.Python.3.13` succeeded:
+#   * `python3` and `python` in PATH are both the Microsoft Store
+#     app-execution alias — a real file at a real path that exits 49 printing
+#     "Python was not found", so `command -v` succeeds while every call fails;
+#   * the python.org installer writes `python.exe` but NO `python3.exe`;
+#   * no `py.exe` launcher exists;
+#   * Git Bash's PATH gains no Python directory at all.
+# So a probe of `python3` alone tells a user who did exactly what we asked that
+# their Python is missing. Every candidate below is probed by EXECUTING it.
+# An array, because a candidate can be two words (`py -3`) and a path can hold
+# spaces; a plain string would need word splitting that also splits the path.
+PY_CMD=()
+py_ok() { "$@" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; }
+
+# The override is read FIRST, before discovery and before any failure exit. It
+# used to sit after the exit, which made the one escape hatch unreachable in
+# exactly the case it exists for — and the error message named it, so the
+# instruction could not be followed. Same defect class as item 22.
+if [[ -n "${SESSION_EXPORT_PYTHON:-}" ]]; then
+  py_ok "$SESSION_EXPORT_PYTHON" \
+    || die "SESSION_EXPORT_PYTHON is set to '$SESSION_EXPORT_PYTHON', which does not run as Python 3.9+"
+  PY_CMD=("$SESSION_EXPORT_PYTHON")
+fi
+if [[ "${#PY_CMD[@]}" -eq 0 ]]; then
+  for cand in python3 python py; do
+    command -v "$cand" >/dev/null 2>&1 || continue
+    if [[ "$cand" == py ]]; then
+      py_ok "$cand" -3 && { PY_CMD=("$cand" -3); break; }
+    else
+      py_ok "$cand" && { PY_CMD=("$cand"); break; }
+    fi
+  done
+fi
+if [[ "${#PY_CMD[@]}" -eq 0 ]]; then
+  # Standard per-user and system install roots the Windows installers use. The
+  # newest is taken first so a machine with several keeps the current one.
+  # Every variable carries a default: `set -u` is on, and LOCALAPPDATA does not
+  # exist off Windows, so a bare expansion would abort with "unbound variable"
+  # instead of reaching the actionable message below.
+  for c in \
+    "${LOCALAPPDATA:-/nonexistent}/Programs/Python"/Python3*/python.exe \
+    "${USERPROFILE:-$HOME}/AppData/Local/Programs/Python"/Python3*/python.exe \
+    /c/Users/*/AppData/Local/Programs/Python/Python3*/python.exe \
+    /c/Python3*/python.exe \
+    "${HOME:-/nonexistent}/scoop/apps/python/current/python.exe"
+  do
+    [[ -x "$c" ]] || continue
+    py_ok "$c" && PY_CMD=("$c")
+  done
+fi
+if [[ "${#PY_CMD[@]}" -eq 0 ]]; then
   {
-    echo "export-direction: python3 on PATH cannot run (it must satisfy: python3 -c '')."
+    echo "export-direction: no usable Python 3.9+ found."
     echo
     echo "  the deterministic funnel is Python. There is no fallback: selecting"
     echo "  sessions any other way would not be reproducible by the recipient."
     echo
-    echo "  on Windows, python3 in PATH is usually the Microsoft Store alias stub"
-    echo "  rather than an interpreter. Install real Python and reopen the shell:"
+    echo "  tried, by running each one: python3, python, py -3, and the standard"
+    echo "  Windows install roots. On Windows the python3 in PATH is usually the"
+    echo "  Microsoft Store alias stub rather than an interpreter."
     echo
     echo "      winget install Python.Python.3.13"
     echo
-    echo "  then re-run this command."
+    echo "  That installer writes python.exe but no python3.exe and does not add"
+    echo "  itself to Git Bash's PATH, so after installing either reopen the"
+    echo "  shell (this script finds the install directory itself) or point it"
+    echo "  at the interpreter directly:"
+    echo
+    echo "      SESSION_EXPORT_PYTHON=/c/path/to/python.exe $0 …"
   } >&2
   exit 1
 fi
+echo "python:    ${PY_CMD[*]}"
 
 JQ="$(command -v jq || command -v jaq || true)"
 [[ -n "$JQ" ]] || {
@@ -201,7 +255,7 @@ for t in $THEME_NAMES; do
   fi
   echo "== theme: $t =="
   surv="$TMP/.direction/$t.survivors.tsv"
-  python3 "$FUNNEL" run "$CAND" "$surv" --policy "$tf" || die "the funnel failed on theme $t"
+  "${PY_CMD[@]}" "$FUNNEL" run "$CAND" "$surv" --policy "$tf" || die "the funnel failed on theme $t"
   n="$(($(wc -l < "$surv") - 1))"
   printf '%s\t%s\t%s\n' "$t" "$n" "0" >> "$counts"
   awk -v t="$t" -F'\t' 'NR > 1 && $NF != "" { print $NF "\t" t }' "$surv" >> "$thememap"
@@ -233,7 +287,7 @@ if [[ "$qualified" -gt 0 ]]; then
               FNR == 1 { print; next }
               ($NF in U)' "$TMP/.direction/union" "$CAND" > "$union_cand"
   enr="$TMP/.direction/union-enriched.tsv"
-  python3 "$FUNNEL" enrich "$union_cand" "$enr" >/dev/null || die "enrich failed over the union"
+  "${PY_CMD[@]}" "$FUNNEL" enrich "$union_cand" "$enr" >/dev/null || die "enrich failed over the union"
   cred_hits="$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) h[$i] = i; next }
                            h["credential_hit"] && $h["credential_hit"] == "1" { n++ }
                            END { print n + 0 }' "$enr")"
