@@ -197,16 +197,29 @@ JQ="$(command -v jq || command -v jaq || true)"
   exit 1
 }
 
+# Windows-native jq writes CRLF on stdout even when its input is LF-clean.
+# Measured on this machine: direction.json and every theme file report a CR
+# count of 0, yet `jq -r '.themes[]'` under scoop's jq-1.8.2 returns each name
+# with a trailing \r. That turned a theme name into `translation\r`, and the
+# path built from it does not exist — so the runner reported the shipped theme
+# as missing on a correct installation.
+#
+# Stripped at ONE chokepoint rather than at each call site: there are ten reads,
+# and a fix repeated ten times is a fix the eleventh reader forgets. Raw CR
+# bytes cannot be significant here — a CR inside a JSON string arrives escaped
+# as the two characters \r, not as a CR byte.
+jqr() { "$JQ" "$@" | tr -d '\r'; }
+
 # ------------------------------------------------------------------ direction
-DIR_NAME="$("$JQ" -r '.direction // empty' "$DIRECTION_FILE")"
-DIR_SKILL="$("$JQ" -r '.skill // empty' "$DIRECTION_FILE")"
-THEME_NAMES="$("$JQ" -r '.themes // [] | .[]' "$DIRECTION_FILE" | tr '\n' ' ')"
+DIR_NAME="$(jqr -r '.direction // empty' "$DIRECTION_FILE")"
+DIR_SKILL="$(jqr -r '.skill // empty' "$DIRECTION_FILE")"
+THEME_NAMES="$(jqr -r '.themes // [] | .[]' "$DIRECTION_FILE" | tr '\n' ' ')"
 THEME_NAMES="${THEME_NAMES% }"
 [[ -n "$THEME_NAMES" ]] || die "direction file lists no themes: $DIRECTION_FILE" 2
 
 # A direction names themes; it must not carry thresholds. Catching this here is
 # what keeps a second copy of a number from appearing in a direction bundle.
-stray="$("$JQ" -r '[paths(scalars) | join(".")] | map(select(test("policy|threshold|keyword|min_|max_|_ratio"))) | .[]' "$DIRECTION_FILE" 2>/dev/null || true)"
+stray="$(jqr -r '[paths(scalars) | join(".")] | map(select(test("policy|threshold|keyword|min_|max_|_ratio"))) | .[]' "$DIRECTION_FILE" 2>/dev/null || true)"
 [[ -z "$stray" ]] || die "direction file carries policy keys, which belong in a theme: $(echo "$stray" | tr '\n' ' ')" 2
 
 for t in $THEME_NAMES; do
@@ -247,7 +260,7 @@ thememap="$TMP/.direction/thememap.tsv"
 
 for t in $THEME_NAMES; do
   tf="$THEMES_DIR/$t.json"
-  ro="$("$JQ" -r '.report_only // false' "$tf")"
+  ro="$(jqr -r '.report_only // false' "$tf")"
   if [[ "$ro" == "true" ]]; then
     echo "== theme: $t (report-only — counted, never selected) =="
     printf '%s\t%s\t%s\n' "$t" "n/a" "1" >> "$counts"
@@ -399,17 +412,17 @@ bash "$CURATE" finalize -o "$OUTDIR_ABS" --yolo || die "finalize failed"
 
 MANIFEST="$OUTDIR_ABS/manifest.json"
 [[ -f "$MANIFEST" ]] || die "no manifest after finalize"
-kept="$("$JQ" 'length' "$MANIFEST")"
+kept="$(jqr 'length' "$MANIFEST")"
 [[ "$kept" -gt 0 ]] || die "finalize kept nothing despite $qualified qualifying sessions"
 
 # ------------------------------------------- 9. direction fields per entry
-theme_counts="$("$JQ" -n '{}')"
+theme_counts="$(jqr -n '{}')"
 while IFS="$(printf '\t')" read -r t n ro; do
   if [[ "$ro" == "1" ]]; then v=null; else v="$n"; fi
-  theme_counts="$("$JQ" -nc --argjson a "$theme_counts" --arg k "$t" --argjson v "$v" '$a + {($k): $v}')"
+  theme_counts="$(jqr -nc --argjson a "$theme_counts" --arg k "$t" --argjson v "$v" '$a + {($k): $v}')"
 done < "$counts"
 
-dir_obj="$("$JQ" -nc \
+dir_obj="$(jqr -nc \
   --arg dir "$DIR_NAME" --arg skill "$DIR_SKILL" \
   --argjson tc "$theme_counts" \
   --argjson allow "$ALLOW_CRED" --argjson hits "$cred_hits" \
@@ -424,7 +437,7 @@ dir_obj="$("$JQ" -nc \
     allow_credentials: ($allow == 1),
     credential_hits: $hits}')"
 
-"$JQ" --argjson d "$dir_obj" --rawfile tm "$thememap" '
+jqr --argjson d "$dir_obj" --rawfile tm "$thememap" '
   ($tm | split("\n") | map(select(length > 0)) | map(split("\t"))
        | map({ key: .[0], value: (.[1] | split(",")) }) | from_entries) as $m
   | map(. + $d + { themes: ($m[.source] // []) })
