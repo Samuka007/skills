@@ -981,6 +981,21 @@ def run_funnel(
 
 
 def main() -> int:
+    # Windows python encodes stdout with the legacy ANSI code page (cp1252 on
+    # this host), not UTF-8. The funnel table quotes session prose in its stage
+    # reasons, and one CJK character in a user's first message then aborts the
+    # whole run with UnicodeEncodeError mid-table — observed killing theme
+    # `generation` at L6 after 33 sessions had already been judged. The same
+    # code page is why the shell's own theme note printed `�`.
+    #
+    # Reconfigure rather than wrap: this keeps `print` working unchanged
+    # everywhere else, and `errors="replace"` means an unmappable glyph
+    # degrades to a placeholder instead of destroying the run. A funnel table
+    # is a decision surface — printing it slightly lossily beats not printing
+    # it at all.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
