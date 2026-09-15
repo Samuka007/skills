@@ -62,12 +62,60 @@ Scan filters (passed to the pipeline's scan)
   -a, --agent claude|codex|both   (default both)
   -w, --workspace SUBSTR
       --since YYYY-MM-DD
-  -n, --min-lines N
+  -n, --min-lines N               drop sessions whose FILE has fewer than N
+                                  lines
   -h, --help
+
+Two length controls, and they are not the same thing
+  `--min-lines` is a FILE line-count floor and nothing else. A request not to
+  drop short sessions means this flag: pass 0 and every scanned file stays a
+  candidate.
+
+  Whether a session's MESSAGES are long enough is separate policy, not a flag:
+  each theme carries a per-message character floor under the key
+  `policy.min_user_msg_chars`, applied by the funnel's L5 length stage. No
+  option of this script reaches it. When L5 kills, this run prints that theme
+  key; the value itself stays in the theme file, which is the only place it
+  can be changed.
 USAGE
 }
 
 die() { printf 'export-direction: %s\n' "$1" >&2; exit "${2:-1}"; }
+
+# The one funnel stage a caller can mistake for `--min-lines`: both are called
+# "length", and only one of them is a flag. Its thresholds are theme policy no
+# option of this script reaches, so a caller told to stop dropping short
+# sessions sets `--min-lines 0`, watches L5 kill on `min_user_msg_chars`
+# anyway, and has no way to tell the two controls apart: the funnel table
+# reports the comparison faithfully, but a comparison is not a place a caller
+# can act. What this adds is the one thing the table cannot say — which theme
+# key produced the kill — and never its value, because the value is policy and
+# lives in the theme file this run does not own.
+l5_note() { # $1 funnel table file, $2 theme name, $3 theme file
+  local table="$1" theme="$2" path="$3" killed block
+  killed="$(awk '/^L[0-9]/ { l5 = ($1 == "L5") }
+                l5 { for (i = 1; i < NF; i++)
+                       if ($i == "killed") { n = $(i + 1); gsub(/,/, "", n); k += n } }
+                END { print k + 0 }' "$table")"
+  [[ "${killed:-0}" -gt 0 ]] || return 0
+  # Continuation lines hang under the row, so the whole block is read: a wrapped
+  # reason can push its second class onto the next line.
+  block="$(awk '/^L[0-9]/ { l5 = ($1 == "L5") } l5' "$table")"
+  if [[ "$block" == *"longest later user msg"* ]]; then
+    printf 'note: theme %s killed %s session(s) at L5 length on the theme key\n' "$theme" "$killed"
+    printf '      `min_user_msg_chars` — a per-MESSAGE character floor, in\n'
+    printf '      %s\n' "$path"
+    printf '      `--min-lines` floors the line count of a session FILE and cannot\n'
+    printf '      reach this stage, so no value of it revives these rows; the key\n'
+    printf '      above is the one to change.\n'
+  fi
+  if [[ "$block" == *"first user msg"* && "$block" == *"> cap"* ]]; then
+    printf 'note: theme %s killed %s session(s) at L5 length on the theme key\n' "$theme" "$killed"
+    printf '      `max_first_msg_chars` — the first-message cap, in\n'
+    printf '      %s\n' "$path"
+    printf '      Also unreachable from this command line; only the theme changes it.\n'
+  fi
+}
 
 DIRECTION_FILE=""
 OUTDIR=""
@@ -270,7 +318,13 @@ for t in $THEME_NAMES; do
   fi
   echo "== theme: $t =="
   surv="$TMP/.direction/$t.survivors.tsv"
-  "${PY_CMD[@]}" "$FUNNEL" run "$CAND" "$surv" --policy "$tf" || die "the funnel failed on theme $t"
+  # The table is tee'd so the run can still name the theme key behind an L5
+  # kill below it; the copy lives outside `.direction/`, which is copied into
+  # the delivered run directory, so the corpus gains no new artifact.
+  ftab="$TMP/funnel-$t.txt"
+  "${PY_CMD[@]}" "$FUNNEL" run "$CAND" "$surv" --policy "$tf" | tee "$ftab" \
+    || die "the funnel failed on theme $t"
+  l5_note "$ftab" "$t" "$tf"
   n="$(($(wc -l < "$surv") - 1))"
   printf '%s\t%s\t%s\n' "$t" "$n" "0" >> "$counts"
   awk -v t="$t" -F'\t' 'NR > 1 && $NF != "" { print $NF "\t" t }' "$surv" >> "$thememap"

@@ -61,10 +61,10 @@ THEME="$REPO/skills/agent-session-batch-export/themes/translation.json"
 # `L7 noncode OFF (this theme sets no exclude_keywords)` because a flag run
 # carries no word lists. Asking the file is the only way to test the file.
 #
-# `--no-dedup` is deliberately NOT passed. It sets the similarity threshold to
-# 0.0 while the stage tests `jaccard >= threshold`, so it collapses every
-# survivor instead of disabling the stage (SPEC item 18). It killed a
-# non-duplicate here and made the count look right for the wrong reason.
+# `--no-dedup` is deliberately NOT passed: this arm asserts what a partner's
+# machine does, and the shipped theme supplies a dedup threshold, so L9 is part
+# of that answer. The flag itself no longer inverts its meaning (SPEC item 18,
+# fixed: it clears the threshold, so the layer prints OFF and kills nothing).
 echo
 echo "== A. the shipped translation theme, as a partner runs it =="
 python3 "$F" run "$W/candidates.tsv" "$W/out.tsv" \

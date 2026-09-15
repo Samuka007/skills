@@ -52,7 +52,9 @@ Stages (fixed order):
                    disclosure stage, NOT a security boundary: an agent that
                    rewrites its own artifacts is not stopped by it.
   L9 dedup      -- near-duplicate cluster collapse via 5-gram Jaccard over
-                   first user messages. Keeps the longest of each cluster.
+                   first user messages. Keeps the longest of each cluster. OFF
+                   (its row still printed) when the policy supplies no
+                   threshold, which is what --no-dedup does.
 
 The signature stage is OFF unless the theme sets --sig-ratio-min: thresholds are
 policy and live in the theme file (PACK-SPEC § 4); the mechanism knows only the
@@ -655,8 +657,18 @@ def stage_dedup(
 ) -> tuple[list[dict], list[tuple[str, str]]]:
     """Collapse near-duplicate clusters (same template conversation). Keep the
     longest member of each cluster. Returns (alive_rows, (killed, reason) list).
-    This is the one cross-row stage; it runs last so the candidate set is small."""
-    thr = p["dedup_threshold"]
+    This is the one cross-row stage; it runs last so the candidate set is small.
+
+    No threshold supplied means the layer is OFF, and that state is spelled
+    `None` — never `0.0`. `jaccard(a, b) >= 0.0` is true of every pair,
+    including two empty signatures, so a threshold of zero collapses every
+    survivor into one: the exact opposite of no dedup. `None` is the sentinel
+    the whole mechanism already reads for "the policy supplied no value"
+    (`Stage.enabled`), which is what `--no-dedup` sets (see main).
+    """
+    thr = p.get("dedup_threshold")
+    if thr is None:
+        return rows, []
     alive: list[dict] = []
     killed: list[tuple[str, str]] = []
     kept_sigs: list[tuple[set[str], str]] = []  # (ngram set, session_file)
@@ -716,6 +728,15 @@ STAGES: list[Stage] = [
     # disclosure the hard gate and the manifest both read.
     Stage("L8 credential", stage_credential),
 ]
+
+
+# The key L9 needs in order to run at all. L9 is the one cross-row stage — it
+# consumes the surviving set rather than one row — so it cannot be a STAGES
+# entry: the loop judges row by row, and dedup runs last for a reason (smallest
+# set). What decides whether it RUNS is still the loop's rule, though: a stage
+# whose required key the policy does not supply is OFF, and says so where its
+# kill count would sit (`Stage.enabled`; the L9 block in run_funnel).
+DEDUP_REQUIRES = "dedup_threshold"
 
 
 # ---------------------------------------------------------------------------
@@ -897,16 +918,28 @@ def run_funnel(
             StageRow(name, len(alive), killed, n_skip, reason="; ".join(bits[:3]))
         )
 
-    # cross-row stage last
-    alive, dup_killed = stage_dedup(alive, views, p)
-    table.append(
-        StageRow(
-            "L9 dedup",
-            len(alive),
-            killed=len(dup_killed),
-            reason="; ".join(f"{k} x1" for _, k in dup_killed[:2]),
+    # cross-row stage last: same gate as every stage above — with no threshold
+    # supplied the layer is OFF, and its row says so instead of carrying a kill
+    # count it did not earn. `--no-dedup` is what produces that state (main).
+    if p.get(DEDUP_REQUIRES) is None:
+        table.append(
+            StageRow(
+                "L9 dedup",
+                len(alive),
+                off=True,
+                reason=f"off (this pack sets no {DEDUP_REQUIRES})",
+            )
         )
-    )
+    else:
+        alive, dup_killed = stage_dedup(alive, views, p)
+        table.append(
+            StageRow(
+                "L9 dedup",
+                len(alive),
+                killed=len(dup_killed),
+                reason="; ".join(f"{k} x1" for _, k in dup_killed[:2]),
+            )
+        )
 
     # print funnel table: the agent's decision surface
     width = 100
@@ -1019,7 +1052,13 @@ def main() -> int:
     pr.add_argument("--max-first-msg-chars", type=int)
     pr.add_argument("--topic-keywords", help="comma-separated; overrides preset")
     pr.add_argument("--dedup-threshold", type=float)
-    pr.add_argument("--no-dedup", action="store_true")
+    pr.add_argument(
+        "--no-dedup",
+        action="store_true",
+        help="turn the dedup layer off: no threshold is supplied, so L9 prints "
+        "OFF and kills nothing. This is NOT --dedup-threshold 0, which "
+        "collapses every survivor into one",
+    )
     pr.add_argument(
         "--sig-ratio-min",
         type=float,
@@ -1159,7 +1198,13 @@ def main() -> int:
     if args.dedup_threshold is not None:
         p["dedup_threshold"] = args.dedup_threshold
     if args.no_dedup:
-        p["dedup_threshold"] = 0.0
+        # Clears the threshold rather than setting it to zero: the stage tests
+        # `jaccard >= thr`, and `>= 0.0` holds for every pair, so a zero
+        # threshold collapses every survivor into one — the opposite of what
+        # this flag promises. `None` is the mechanism's own "the policy
+        # supplied no value" state, which both `Stage.enabled` and
+        # `stage_dedup` read as OFF, and which the L9 row prints as such.
+        p["dedup_threshold"] = None
     if args.sig_ratio_min is not None:
         p["sig_ratio_min"] = args.sig_ratio_min
 

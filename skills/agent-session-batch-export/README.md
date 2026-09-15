@@ -185,6 +185,29 @@ is the same run captured as three labeled pane snapshots. Reproduce it with
 `bash docs/agent-session-batch-export/demo.sh` (fixtures go to `/tmp/asbe-demo`,
 safe to delete after).
 
+## Coming from `trajectory-packs`
+
+`trajectory-packs` and the engine directory beside it, `trajectory-funnel`, were
+retired; this skill and [`session-export-nocode`](../session-export-nocode/SKILL.md)
+replaced them. The installer copies a skill directory whole and never removes
+one, so a machine that installed the old skill still has it — and still has it
+after installing this one. That copy exits nonzero and writes nothing when run,
+but its own repair command names two skills that no longer exist, and the
+installer drops the names it cannot resolve while reporting
+`Installed 2 skills ✓✓`.
+
+Delete the retired copies and install the pair that replaced them:
+
+```bash
+rm -rf ~/.agents/skills/trajectory-packs ~/.agents/skills/trajectory-funnel
+
+npx skills add Samuka007/skills \
+  --skill session-export-nocode --skill agent-session-batch-export -g -y
+```
+
+[`docs/RELEASE-NOTES.md`](../../docs/RELEASE-NOTES.md) has the full account:
+what replaced which part, and the base-skill-only install.
+
 ## Requirements
 
 bash 3.2+ with a POSIX userland (awk, sed, find, stat, cmp, sort, cut, tr,

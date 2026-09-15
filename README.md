@@ -26,6 +26,12 @@ mechanism (the funnel), the themes, and the pipeline. A **direction bundle**
 owns only a theme list and its invocation policy — it restates no threshold, so
 adding a purchase direction adds one small skill and changes no numbers.
 
+Two published skills have been retired — `trajectory-packs`, and the engine
+directory `trajectory-funnel` beside it — and replaced by the two above. The
+installer copies and never removes, so a machine that installed the old one
+still has it; [`docs/RELEASE-NOTES.md`](docs/RELEASE-NOTES.md) says what to
+delete and what to install.
+
 ## Layout
 
 ```
@@ -34,13 +40,15 @@ skills/<skill-name>/scripts/     # executable code                  (shipped)
 skills/<skill-name>/themes/      # theme policy JSON: every threshold (shipped)
 
 docs/<skill-name>/               # maintainer notes          (repo only)
+docs/RELEASE-NOTES.md            # retirements, and what replaced them (repo only)
 test/                            # test suites               (repo only)
 ```
 
 `skills/<skill-name>/` is the published unit: `npx skills add` copies that
 directory **whole**, so maintainer documentation must not live inside it. Each
 skill's development notes go in `docs/<skill-name>/`, mirroring the skill name
-so the mapping is one-to-one.
+so the mapping is one-to-one. The one exception is `docs/RELEASE-NOTES.md`:
+a retirement outlives the skill it retires, so it belongs to no single skill.
 
 Follows the [Agent Skills specification](https://agentskills.io/specification):
 
@@ -63,6 +71,7 @@ bash test/test-outdir-tmux.sh                     # output-directory prompt flow
 echo "--- interactive (Windows, run under Git Bash) ---"
 bash test/win-zellij-pick.sh                      # real picker through zellij (issue #7)
 echo "--- static ---"
+bash test/shipped-install-refs.sh
 shellcheck skills/<name>/scripts/*.sh
 ty check skills/agent-session-batch-export/scripts/funnel.py
 ruff check skills/agent-session-batch-export/scripts/funnel.py

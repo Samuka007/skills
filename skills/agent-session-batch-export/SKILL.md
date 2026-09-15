@@ -122,6 +122,22 @@ selection with your judgement, which is the one thing this path removes.
 Every threshold lives in `themes/<name>.json`; a direction file carries only a
 theme list. Never restate a threshold when reporting — name the theme key.
 
+### The two length controls are unrelated
+
+A request not to drop short sessions means `--min-lines`: the FILE line-count
+floor on this script (and on `scan`). Pass `0` and no scanned file is dropped
+for being short. It is a flag, and on this path it is the only length control
+you can set.
+
+Whether a session's MESSAGES are long enough is separate policy. Each theme
+carries a per-message character floor at the key `policy.min_user_msg_chars`,
+applied by the funnel's L5 `length` stage. The runner exposes no option for it —
+a direction's selection must be reproducible from the theme file alone — so a
+`--min-lines 0` run still drops sessions whose user turns fall under that key.
+The funnel table reports the kill truthfully (`longest later user msg N < M`),
+and the runner prints the theme key a caller would have to change. Name that
+key when reporting; never restate the value.
+
 Two failures are actionable rather than fatal, and both belong to the user:
 
 - **`python3` unusable.** The engine is Python and there is no fallback. Show the
@@ -232,7 +248,8 @@ The picker runs this check itself after finalizing and prints
 - `--workspace SUBSTR` — substring of the session's real cwd
 - `--topic REGEX` — extended regex over extracted prose
 - `--since YYYY-MM-DD`
-- `--min-lines N` — drop stub sessions
+- `--min-lines N` — drop stub sessions: a FILE line-count floor, unrelated to
+  the per-MESSAGE floor each theme carries (see Direction export)
 
 `review`:
 - `--ui fzf` (default when fzf is present) or `--ui tsv` — tsv emits

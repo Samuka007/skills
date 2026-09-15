@@ -49,6 +49,10 @@ MIN_LINES=0
 UI=fzf
 HARDLINK=0
 FROM=""
+# validate's positional argument: the TSV to check, `validate DIR/decisions.tsv`.
+# Same slot as --from, which is how finalize has always named its decisions
+# file; --from wins if both are given.
+SRC_ARG=""
 # delivery's archive override. `-o` is the working directory on every command;
 # `delivery` takes the contract's `--out FILE` as the path of the ARTIFACT it
 # produces (issue #10), so the two spellings are split in the parse loop.
@@ -80,7 +84,11 @@ Commands
               handing to the buyer: verifies every recorded sha256 first, then
               writes OUT/<name>-<date>.zip|tar.gz with the corpus at its root
               and reads the archive back to confirm the members.
-  validate    sanity-check a candidates/decisions TSV (column shape)
+  validate    sanity-check a candidates/decisions TSV: every row as wide as the
+              header, plus a tally of the decision column. The TSV may be given
+              positionally (validate DIR/decisions.tsv) or with --from FILE;
+              the default is OUT/candidates.tsv, or OUT/decisions.tsv when that
+              is the only one of the two present.
 
 Shared options
   -a, --agent NAME      claude | codex | both           (scan)
@@ -129,7 +137,17 @@ while [[ $# -gt 0 ]]; do
     --hardlink)     HARDLINK=1; shift ;;
     --yolo)         YOLO=1; shift ;;
     -h|--help)      usage; exit 0 ;;
-    *) echo "unknown option: $1" >&2; exit 2 ;;
+    -*)             echo "unknown option: $1" >&2; exit 2 ;;
+    # A bare positional. Only validate consumes one — the help calls it
+    # "sanity-check a candidates/decisions TSV" and the natural spelling is
+    # `validate DIR/decisions.tsv`, which used to die as "unknown option: …",
+    # rc=2, on the one file the command exists to check. Every other command
+    # keeps rejecting a positional: none of them has a slot for one.
+    *)  if [[ "$CMD" != validate ]]; then
+          echo "unknown option: $1" >&2; exit 2
+        fi
+        [[ -z "$SRC_ARG" ]] || { echo "unexpected extra argument: $1" >&2; exit 2; }
+        SRC_ARG="$1"; shift ;;
   esac
 done
 
@@ -433,24 +451,53 @@ fi
 
 # ============================================================== validate
 if [[ "$cmd" == validate ]]; then
-  src="${FROM:-$CAND}"
+  # Which TSV: an explicit path wins — the positional argument or --from FILE,
+  # which name the same slot. Without one, the default is candidates.tsv,
+  # falling back to decisions.tsv when that is the only one of the two present:
+  # a decisions-only directory is a normal state (the review step's output is
+  # what matters by then), and `-o DIR` has to be able to check it. Resolving
+  # only $CAND here made `validate -o DIR` unreachable for exactly the file the
+  # command's own help says it validates.
+  src="${FROM:-${SRC_ARG:-}}"
+  if [[ -z "$src" ]]; then
+    if   [[ -f "$CAND" ]]; then src="$CAND"
+    elif [[ -f "$DEC"  ]]; then src="$DEC"
+    else echo "no such file: $CAND (or $DEC)" >&2; exit 1
+    fi
+  fi
   [[ -f "$src" ]] || { echo "no such file: $src" >&2; exit 1; }
   echo "== $src =="
-  # candidates.tsv is 7 cols; decisions.tsv is 10 (it embeds the candidate cols
-  # behind decision/reason/suggested). Judge by the header, not a hardcoded n.
+  # The expected width is the file's OWN header: candidates.tsv is 7 columns,
+  # decisions.tsv is 10 (the verdict columns first), a screen.tsv is 9. A
+  # hardcoded 10-vs-7 branch keyed on $1 false-alarms on any decisions file
+  # whose verdict columns are not first — which is the file this command is
+  # documented to check. What has to hold is that every row is as wide as the
+  # header, because that is what a tab inside a free-text field breaks.
   awk -F'\t' '
     NR == 1 {
       print "columns(" NF "): " $0
-      want = ($1 == "decision") ? 10 : 7
+      want = NF
       print "expected cols: " want
       next
     }
     NF != want { bad++ }
-    END { if (bad) print "MALFORMED rows (expected " want " cols): " bad
-          else     print "shape ok (" want " cols)" }' "$src"
-  awk -F'\t' 'NR==1{ for(i=1;i<=NF;i++) h[$i]=i; next }
-              { if ("decision" in h) { d=$h["decision"]; if (d!="") c[d]++ } }
-              END { for (k in c) printf "decision=%s: %d\n", k, c[k] }' "$src"
+    END { if (NR == 0)  print "empty file — nothing to check"
+          else if (bad) print "MALFORMED rows (expected " want " cols): " bad
+          else          print "shape ok (" want " cols)" }' "$src"
+  # decision tally. A file with no decision column (candidates, screen) has
+  # none to print. The blank count is printed too: a fresh decisions.tsv then
+  # says how many rows are still undecided instead of printing nothing at all,
+  # which is indistinguishable from a tally that never ran. `for (k in c)` has
+  # no order, so the report goes through sort to be deterministic.
+  awk -F'\t' '
+    NR == 1 { for (i = 1; i <= NF; i++) h[$i] = i; next }
+    { if (!("decision" in h)) next
+      d = $h["decision"]
+      if (d == "") blank++
+      else c[d]++ }
+    END { if (!("decision" in h)) exit
+          printf "decision=%s: %d\n", "(blank)", blank
+          for (k in c) printf "decision=%s: %d\n", k, c[k] }' "$src" | sort
   exit 0
 fi
 
