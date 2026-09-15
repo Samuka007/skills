@@ -63,7 +63,8 @@ fallback would make the selection unreproducible for the recipient. The script
 probes by *executing* (`python3 -c ''`) because on Windows `python3` in PATH is
 usually the Microsoft Store alias stub: a real file that exits 49 printing
 "Python was not found", so a presence check passes while every call fails. When
-that probe fails it prints `winget install Python.Python.3.13` and stops.
+that probe fails it prints `scoop install python` / `winget install
+Python.Python.3.13` and stops.
 
 Sessions carrying credential shapes refuse the whole batch (exit 3, nothing
 written) unless `--allow-credentials` is passed, which is recorded in the
@@ -188,8 +189,9 @@ safe to delete after).
 
 bash 3.2+ with a POSIX userland (awk, sed, find, stat, cmp, sort, cut, tr,
 mktemp, sha256). Windows Git Bash bundles all of that; add `jq` and
-`ripgrep` via scoop or winget. Optional: `fzf` for the interactive review.
-The optional funnel needs `python3` (standard library only).
+`python3` via scoop or winget. `python3` is required, not optional: the
+selection engine is `scripts/funnel.py`. Optional: `fzf` for the interactive
+review, `ripgrep` for faster topic matching.
 
 Sessions are read from `$HOME/.claude/projects` and `$HOME/.codex/sessions`
 of the environment the script runs in — see

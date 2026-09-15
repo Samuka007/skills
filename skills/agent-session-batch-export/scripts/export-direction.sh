@@ -174,12 +174,14 @@ if [[ "${#PY_CMD[@]}" -eq 0 ]]; then
     echo "  Windows install roots. On Windows the python3 in PATH is usually the"
     echo "  Microsoft Store alias stub rather than an interpreter."
     echo
+    echo "      scoop install python          # verified: provides python3"
     echo "      winget install Python.Python.3.13"
     echo
-    echo "  That installer writes python.exe but no python3.exe and does not add"
-    echo "  itself to Git Bash's PATH, so after installing either reopen the"
-    echo "  shell (this script finds the install directory itself) or point it"
-    echo "  at the interpreter directly:"
+    echo "  scoop shims both python and python3 and is on this script's probe"
+    echo "  list. The winget installer writes python.exe but no python3.exe and"
+    echo "  does not add itself to Git Bash's PATH, so after it either reopen"
+    echo "  the shell (this script finds the install directory itself) or point"
+    echo "  it at the interpreter directly:"
     echo
     echo "      SESSION_EXPORT_PYTHON=/c/path/to/python.exe $0 …"
   } >&2

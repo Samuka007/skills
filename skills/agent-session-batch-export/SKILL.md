@@ -2,9 +2,9 @@
 name: agent-session-batch-export
 description: "Curate claude_code/codex session transcripts into a corpus of RAW .jsonl trajectory material for agentic analysis. Scans candidates by workspace/topic, lets an agent screen them and a human mark keep/drop, then copies the kept sessions byte-for-byte with a sha256 manifest. Use when extracting trajectory material, building a dataset of past agent sessions, filtering sessions by workspace, project, or topic, or when the user wants to pick conversations to keep from their agent history."
 license: MIT
-compatibility: "Requires bash 3.2+ with a POSIX userland (awk, sed, find, stat, cmp, sort, cut, tr, mktemp, sha256) and jq. Windows Git Bash bundles the userland; add jq via scoop or winget. The deterministic funnel and every direction export additionally require python3 (standard library only) — on Windows install it with `winget install Python.Python.3.13`, because the python3 in PATH is usually the Microsoft Store alias stub. The interactive scan/review/finalize path needs no Python. Optional: fzf for the interactive review, ripgrep for faster topic matching. Reads ~/.claude/projects and ~/.codex/sessions. Runs on Linux, macOS, and Windows Git Bash."
+compatibility: "Linux, macOS, Windows Git Bash. Requires bash 3.2+, a POSIX userland (awk sed find stat cmp sort cut tr mktemp sha256), jq, and python3 (stdlib only). Git Bash bundles the userland; add jq and python3 via scoop or winget. On Windows the PATH python3 is usually a Microsoft Store stub that exits 49, so probe it by running it, not by presence. Optional: fzf for the interactive review, ripgrep for faster topic matching. Reads ~/.claude/projects and ~/.codex/sessions."
 metadata:
-  verified-platforms: "GNU/Linux; Windows (Git Bash via .ps1 wrappers) with scoop jq+ripgrep. Direction exports verified on GNU/Linux; on Windows they need python3 installed first"
+  verified-platforms: "GNU/Linux; Windows (Git Bash via .ps1 wrappers) with scoop jq+python3. Direction exports verified end-to-end on both"
 ---
 
 # Curate agent sessions into trajectory material
@@ -12,9 +12,10 @@ metadata:
 Turns a large pile of claude_code / codex transcripts into a small, provably
 unmodified corpus that an agent can analyze.
 
-`scripts/curate-sessions.sh` — no index, no daemon, no network. The interactive
-path below needs no Python; the deterministic direction path runs
-`scripts/funnel.py` and requires `python3`.
+`scripts/curate-sessions.sh` — no index, no daemon, no network. `python3` is a
+prerequisite of the skill, not of one branch: the selection engine is
+`scripts/funnel.py`, and there is no supported path that reaches a corpus
+without it.
 
 The core property: **the kept files are byte-identical copies of the originals**,
 each with a recorded sha256. Nothing is re-rendered, summarized, or converted,
@@ -124,8 +125,8 @@ theme list. Never restate a threshold when reporting — name the theme key.
 Two failures are actionable rather than fatal, and both belong to the user:
 
 - **`python3` unusable.** The engine is Python and there is no fallback. Show the
-  script's `winget install Python.Python.3.13` hint and ask whether to install
-  and retry. Never substitute your own semantic screening.
+  script's `scoop install python` / `winget install Python.Python.3.13` hint and
+  ask whether to install and retry. Never substitute your own semantic screening.
 - **Credential shapes found.** The run refuses the whole batch (exit 3, nothing
   written). Report the count and offer the explicit `--allow-credentials` re-run;
   never add that flag on your own initiative.
