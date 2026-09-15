@@ -34,7 +34,7 @@ tell which was agreed. One canonical location per kind, pointed at from here.
 | 12 | buy-side pack family: design + specification | **in progress** | `docs/trajectory-packs/DESIGN.md` (layering, direction/theme packs, two run flows) and `docs/trajectory-packs/PACK-SPEC.md` (themes, layers, signature rule, manifest shape, deviations). Canonical copies live in those two files — the items below implement them |
 | 13 | mechanism: thinking-signature stage, three-state | **dispatched** (issue #9) | needs `signature: present/empty/absent` + `signature_ratio` per session; claude_code reads `message.content[].signature`, codex reports `absent` and the layer records a skip |
 | 14 | codex semantics: closure skip + injected-turn inflation | **dispatched** (issue #11) | codex has no `stop_reason` (currently passes via an empty string, indistinguishable from a real pass), and its `environment_context` block is counted as a user turn — measured: a 1-turn translation session reports `user_turns 2` |
-| 15 | pack skill + driver (`trajectory-packs`) | **pending** | direction/theme pack JSON, `pack-export.sh` expanding a pack into funnel flags + driving finalize, pre-export volume report |
+| 15 | pack skill + driver (`trajectory-packs`) | **half done** | packs written in `ce5e192` (1 direction + 6 themes, every threshold carrying its provenance) and `SKILL.md` describes the two run flows; the driver `scripts/pack-export.sh` is **not written** — dispatched as issue [#12](https://github.com/Samuka007/skills/issues/12) |
 | 16 | delivery archive command | **dispatched** (issue #10) | `curate-sessions.sh delivery`: keep/ + manifest → one archive (`zip` on Windows, `tar.gz` elsewhere) + per-item sha256 |
 
 ## Decisions and constraints (apply to all future items)
