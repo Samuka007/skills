@@ -1,14 +1,20 @@
 # SPEC index — trajectory-export skill family
 
-**Where the spec lives.** The canonical Requirement / Specification / Acceptance
-for each item is the **GitHub issue body** (`gh issue view <n> --repo Samuka007/skills`).
-This index records what cannot live in an issue: current status, the acceptance
-evidence, and decisions taken after the issue was written.
+**Where the spec lives.** Depends on what kind of spec it is, and each kind has
+exactly one home:
 
-Rejected alternative: duplicating each issue body into `SPEC/<n>.md`. Two copies
-of a spec drift — the issue gets edited during review and the file does not, and
-a reader then cannot tell which one was agreed. One canonical location, pointed
-at from here.
+- **A feature's Requirement / Specification / Acceptance** → the **GitHub issue
+  body** (`gh issue view <n> --repo Samuka007/skills`). This index records what
+  cannot live there: status, acceptance evidence, and decisions taken after the
+  issue was written.
+- **What we buy, and how a delivered batch is checked** → the files under
+  `docs/trajectory-packs/`. Those are the buy-side specification and they are
+  normative for every pack item; the issues implement them.
+- **How the skill family is laid out** → `docs/trajectory-packs/DESIGN.md`.
+
+Rejected alternative: duplicating a spec into several files. Two copies drift —
+one gets edited during review and the other does not, and a reader then cannot
+tell which was agreed. One canonical location per kind, pointed at from here.
 
 ## Items
 
@@ -26,10 +32,10 @@ at from here.
 | 10 | repair the interactive suites | **done** | commit `08f10f1`; all suites green; `test-pick-tmux.sh` 1/8 → 16/16 |
 | 11 | README: document `--yolo` | **done** | commit `cde2224` (issue #8, auto-closed); `### No-review export: --yolo` under Quickstart; statement-by-statement cross-check against SKILL.md § Escape clause found no disagreement; `test/yolo-e2e.sh` re-run green |
 | 12 | buy-side pack family: design + specification | **in progress** | `docs/trajectory-packs/DESIGN.md` (layering, direction/theme packs, two run flows) and `docs/trajectory-packs/PACK-SPEC.md` (themes, layers, signature rule, manifest shape, deviations). Canonical copies live in those two files — the items below implement them |
-| 13 | mechanism: thinking-signature stage, three-state | **pending** | needs `signature: present/empty/absent` + `signature_ratio` per session; claude_code reads `message.content[].signature`, codex reports `absent` and the layer records a skip |
+| 13 | mechanism: thinking-signature stage, three-state | **dispatched** (issue #9) | needs `signature: present/empty/absent` + `signature_ratio` per session; claude_code reads `message.content[].signature`, codex reports `absent` and the layer records a skip |
 | 14 | mechanism: codex closure layer is skipped, not failed | **pending** | codex has no `stop_reason`; the layer must record the skip so it cannot be read as a pass |
 | 15 | pack skill + driver (`trajectory-packs`) | **pending** | direction/theme pack JSON, `pack-export.sh` expanding a pack into funnel flags + driving finalize, pre-export volume report |
-| 16 | delivery archive command | **pending** | `curate-sessions.sh delivery`: keep/ + manifest → one archive (`zip` on Windows, `tar.gz` elsewhere) + per-item sha256 |
+| 16 | delivery archive command | **dispatched** (issue #10) | `curate-sessions.sh delivery`: keep/ + manifest → one archive (`zip` on Windows, `tar.gz` elsewhere) + per-item sha256 |
 
 ## Decisions and constraints (apply to all future items)
 
