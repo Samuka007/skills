@@ -27,17 +27,50 @@ bash 3.2+ and the POSIX userland your machine already has.
 | Stage | Runs | Produces |
 |---|---|---|
 | scan | `curate-sessions.sh scan` | `OUT/candidates.tsv` |
-| funnel *(optional)* | `trajectory-funnel` (see below) | rewrites `candidates.tsv` to the survivors, rebuilds the `screen.tsv` scaffold |
+| funnel *(optional here, mandatory on the direction path)* | `scripts/funnel.py` | rewrites `candidates.tsv` to the survivors, rebuilds the `screen.tsv` scaffold |
 | screen | agent fills two columns | `OUT/screen.tsv` with `suggested` + `reason` per row |
 | review | **the USER** | `OUT/decisions.tsv` — `decision=keep\|drop` per row |
 | finalize | `curate-sessions.sh finalize` | `OUT/keep/*.jsonl` + `OUT/manifest.json` |
 | verify | picker does it automatically | `verified: N/N copies byte-identical` |
 
-`funnel` is the pre-filter from the sibling [`trajectory-funnel`](../trajectory-funnel/README.md)
-directory (engine code in this repo, not an installable skill): it shrinks a
-large scan to the sessions worth attention before any human or agent reads
-prose. It is optional — without it, the pipeline is exactly the four stages
-of `SKILL.md`; with it, everything downstream of scan is unchanged.
+`funnel` is `scripts/funnel.py`, shipped inside this skill: it shrinks a large
+scan to the sessions worth attention before any human or agent reads prose. On
+the interactive path above it is optional — without it the pipeline is exactly
+the four stages of `SKILL.md`, and with it everything downstream of scan is
+unchanged. On the **direction path** it is not optional: it *is* the selection.
+Maintainer notes for the engine: [`docs/agent-session-batch-export/FUNNEL.md`](../../docs/agent-session-batch-export/FUNNEL.md).
+
+## Direction export: the selection is deterministic
+
+A **direction** is a purchase: a named set of themes, exported without an agent
+judging prose. `scripts/export-direction.sh` runs it end to end — scan, one
+funnel run per theme, union the survivors, then finalize and deliver:
+
+```bash
+bash scripts/export-direction.sh \
+  --direction-file /path/to/direction.json -o ./out --yolo
+```
+
+Every threshold comes from `themes/<name>.json`; the direction file carries only
+a theme list. There is no `screen.tsv` step on this path, so there is no row for
+an agent to fill and none for it to get wrong: the funnel's survivors are
+written straight into `decisions.tsv`. An agent running this may read the funnel
+table and abort on a catastrophic run; editing its output is not one of the
+things it may do.
+
+`python3` is a prerequisite, not a branch — the engine is Python and a semantic
+fallback would make the selection unreproducible for the recipient. The script
+probes by *executing* (`python3 -c ''`) because on Windows `python3` in PATH is
+usually the Microsoft Store alias stub: a real file that exits 49 printing
+"Python was not found", so a presence check passes while every call fails. When
+that probe fails it prints `winget install Python.Python.3.13` and stops.
+
+Sessions carrying credential shapes refuse the whole batch (exit 3, nothing
+written) unless `--allow-credentials` is passed, which is recorded in the
+manifest. That is disclosure and determinism, not a security boundary: an agent
+that rewrites its own artifacts is not stopped by it.
+
+The shipped direction is [`session-export-nocode`](../session-export-nocode/SKILL.md).
 
 ## Quickstart
 
@@ -55,7 +88,7 @@ bash scripts/pick-sessions.sh -o ./cur --agent codex --min-lines 20
 
 ```bash
 C=scripts/curate-sessions.sh
-F=skills/trajectory-funnel/scripts/funnel.py     # path to the sibling skill
+F=scripts/funnel.py                              # shipped inside this skill
 OUT=/tmp/cur
 
 # 1. scan — enumerate candidates -> $OUT/candidates.tsv

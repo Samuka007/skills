@@ -4,7 +4,14 @@ Personal Agent Skills, installable with [skills.sh](https://skills.sh) / `npx sk
 
 ```bash
 npx skills add Samuka007/skills --list
+
+# the base skill: scan, screen, review, copy, manifest, deliver
 npx skills add Samuka007/skills --skill agent-session-batch-export -g
+
+# a direction bundle needs the base skill too — there is no dependency field
+# in the Agent Skills spec, so both are named (or use Select All)
+npx skills add Samuka007/skills \
+  --skill session-export-nocode --skill agent-session-batch-export -g
 ```
 
 ## Available
@@ -12,12 +19,19 @@ npx skills add Samuka007/skills --skill agent-session-batch-export -g
 | Skill | What it does |
 |---|---|
 | [`agent-session-batch-export`](skills/agent-session-batch-export/SKILL.md) | Curate claude_code/codex session transcripts into a corpus of **raw `.jsonl`** trajectory material for agentic analysis. Scans candidates by workspace/topic, lets an agent screen them and a human mark keep/drop, then copies the kept sessions byte-for-byte with a sha256 manifest. |
+| [`session-export-nocode`](skills/session-export-nocode/SKILL.md) | Export the non-code direction: six themes, selected by the base skill's deterministic funnel rather than by an agent reading prose. Invoked by hand; only an explicit opt-out phrase skips the confirmation. |
+
+Two layers, one rule about where a change lands. The **base skill** owns the
+mechanism (the funnel), the themes, and the pipeline. A **direction bundle**
+owns only a theme list and its invocation policy — it restates no threshold, so
+adding a purchase direction adds one small skill and changes no numbers.
 
 ## Layout
 
 ```
 skills/<skill-name>/SKILL.md     # required, with YAML frontmatter  (shipped)
 skills/<skill-name>/scripts/     # executable code                  (shipped)
+skills/<skill-name>/themes/      # theme policy JSON: every threshold (shipped)
 
 docs/<skill-name>/               # maintainer notes          (repo only)
 test/                            # test suites               (repo only)
@@ -50,8 +64,8 @@ echo "--- interactive (Windows, run under Git Bash) ---"
 bash test/win-zellij-pick.sh                      # real picker through zellij (issue #7)
 echo "--- static ---"
 shellcheck skills/<name>/scripts/*.sh
-ty check skills/trajectory-funnel/scripts/funnel.py
-ruff check skills/trajectory-funnel/scripts/funnel.py
+ty check skills/agent-session-batch-export/scripts/funnel.py
+ruff check skills/agent-session-batch-export/scripts/funnel.py
 ```
 
 The interactive tests need a real PTY (they drive tmux and read the pane back)

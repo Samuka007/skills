@@ -17,7 +17,8 @@
       # piping, but the interactive path only proves itself under a terminal you
       # can drive and read back (tmux send-keys + capture-pane).
       #
-      # python tooling serves skills/trajectory-funnel/scripts/funnel.py. The
+      # python tooling serves the funnel engine at
+      # skills/agent-session-batch-export/scripts/funnel.py. The
       # DISTRIBUTED artifact stays standard-library-only (zero deps for users);
       # ty (type check, astral) and ruff (lint/format) are DEV-ONLY gates.
       devShells.${system}.default = pkgs.mkShell {

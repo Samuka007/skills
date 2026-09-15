@@ -13,7 +13,7 @@
 # the direction default of 20 it is killed by the length layer.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-F="$REPO/skills/trajectory-funnel/scripts/funnel.py"
+F="$REPO/skills/agent-session-batch-export/scripts/funnel.py"
 WIN="${WIN_CODEX_STORE:-/mnt/c/Users/Samuka007/.codex/sessions}"
 W="${1:-/tmp/acc-codex-win}"
 rm -rf "$W"; mkdir -p "$W"

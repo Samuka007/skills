@@ -29,7 +29,7 @@
 # Dependencies: bash, awk, python3. NOT tmux, NOT fzf, NOT jq.
 set -uo pipefail
 REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
-F="$REPO/skills/trajectory-funnel/scripts/funnel.py"
+F="$REPO/skills/agent-session-batch-export/scripts/funnel.py"
 WORK="${1:-/tmp/codex-sem-e2e}"
 
 pass=0; fail=0
@@ -276,7 +276,8 @@ has "cap 10 kills the 11-char real request" \
 python3 "$F" run "$WORK/candidates.tsv" "$WORK/out-dup.tsv" --preset report \
   --min-turns 0 --max-tool-ratio 1.0 --no-end-turn --topic-keywords "" \
   --max-first-msg-chars 0 --min-user-msg-chars 0 > "$WORK/run.dup" 2>&1
-chk "dedup collapsed the twin codex pair" "$(cell L7 5 run.dup)" "1"
+# dedup is L9 since the noncode and credential stages joined the order.
+chk "dedup collapsed the twin codex pair" "$(cell L9 5 run.dup)" "1"
 has "and the survivor list holds one of the two" "$(alive_list out-dup.tsv)" "codex-twin-a.jsonl"
 
 # ------------------------------------------------- C: the closure skip

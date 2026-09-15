@@ -5,7 +5,7 @@
 # Usage: test/funnel-e2e.sh   (runs under nix develop for tmux; skips if absent)
 set -uo pipefail
 REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
-FUNNEL="$REPO/skills/trajectory-funnel/scripts/funnel.py"
+FUNNEL="$REPO/skills/agent-session-batch-export/scripts/funnel.py"
 C="$REPO/skills/agent-session-batch-export/scripts/curate-sessions.sh"
 PICK="$REPO/skills/agent-session-batch-export/scripts/pick-sessions.sh"
 WORK="${1:-/tmp/funnel-e2e}"

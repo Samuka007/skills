@@ -20,7 +20,7 @@
 # Dependencies: bash, awk, python3. NOT tmux, NOT fzf.
 set -uo pipefail
 REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
-F="$REPO/skills/trajectory-funnel/scripts/funnel.py"
+F="$REPO/skills/agent-session-batch-export/scripts/funnel.py"
 WORK="${1:-/tmp/signature-e2e}"
 
 pass=0; fail=0
@@ -167,9 +167,12 @@ chk "survivors unchanged" "$(awk -F'\t' 'NR>1' "$WORK/out.tsv" | wc -l | tr -d '
 # row would make those two identical.
 chk "the off row is still printed, not dropped" \
   "$(grep -c '^L3 signature' "$WORK/run.off")" "1"
-# L0 scan + the seven stages.
+# L0 scan + the nine stages (L7 noncode and L8 credential joined the order, so
+# dedup is L9). The count is asserted, not the labels: the invariant is that a
+# gated-off stage still occupies a row, so "never ran" cannot read as "ran and
+# passed everything".
 chk "and every stage keeps its row" \
-  "$(grep -cE '^L[0-9] ' "$WORK/run.off")" "8"
+  "$(grep -cE '^L[0-9] ' "$WORK/run.off")" "10"
 has "the off reason names the key that turns it on" "$row" "sig_ratio_min"
 
 # --------------------------------- C: on -> present passes, empty fails, skips

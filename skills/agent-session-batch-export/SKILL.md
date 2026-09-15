@@ -96,8 +96,37 @@ The funnel's recommendation is the row set itself: those survivors are the
 sessions it judged worth attention, and screening them is still yours to do. The
 rows you mark `keep` are what the picker pre-selects and what `--yolo` exports.
 Everything downstream — `review`, `finalize`, the gate — reads the same files
-either way. The engine is repo-only
-(`skills/trajectory-funnel/scripts/funnel.py`) and does not ship with this skill.
+either way. The engine ships inside this skill as `scripts/funnel.py`.
+
+## Direction export (`scripts/export-direction.sh`)
+
+A **direction** is a purchase — a named set of themes exported without an agent
+judging prose. This path exists because a selection a partner must be able to
+re-check has to be reproducible, and a model reading prose is not.
+
+```bash
+bash scripts/export-direction.sh --direction-file DIR.json -o OUT --yolo
+```
+
+What is different from the pipeline above, and it is the whole point: **there is
+no screening step.** The funnel's survivors are written straight into
+`decisions.tsv`, so no `screen.tsv` row exists for you to fill. You may read the
+funnel table and abort the run when something is catastrophically wrong. You may
+not edit `candidates.tsv`, `screen.tsv`, `decisions.tsv`, or the funnel's output,
+and you may not choose keep/drop rows. Doing so replaces a reproducible
+selection with your judgement, which is the one thing this path removes.
+
+Every threshold lives in `themes/<name>.json`; a direction file carries only a
+theme list. Never restate a threshold when reporting — name the theme key.
+
+Two failures are actionable rather than fatal, and both belong to the user:
+
+- **`python3` unusable.** The engine is Python and there is no fallback. Show the
+  script's `winget install Python.Python.3.13` hint and ask whether to install
+  and retry. Never substitute your own semantic screening.
+- **Credential shapes found.** The run refuses the whole batch (exit 3, nothing
+  written). Report the count and offer the explicit `--allow-credentials` re-run;
+  never add that flag on your own initiative.
 
 ## Screening (stage 2)
 

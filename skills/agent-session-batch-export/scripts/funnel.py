@@ -39,7 +39,19 @@ Stages (fixed order):
                    sessions (first_prompt is huge, real request is tiny).
   L6 topic      -- keyword/regex match over extracted user prose. The only
                    stage that reads message bodies.
-  L7 dedup      -- near-duplicate cluster collapse via 5-gram Jaccard over
+  L7 noncode    -- coding-signal exclusion. "Mainly not code" is a NEGATIVE
+                   property, so it is judged by coding signals being absent
+                   rather than by a non-coding keyword being present. Runs only
+                   when the theme supplies exclude_keywords.
+  L8 credential -- credential shapes over the COMPLETE raw JSONL, not merely
+                   user prose: a key can sit in tool output or an assistant
+                   message. It ANNOTATES and never drops a row, because
+                   silently exporting the rest of a batch would hide the
+                   finding; --credential-hard-gate turns any surviving hit into
+                   a whole-batch refusal (exit 3). This is a determinism and
+                   disclosure stage, NOT a security boundary: an agent that
+                   rewrites its own artifacts is not stopped by it.
+  L9 dedup      -- near-duplicate cluster collapse via 5-gram Jaccard over
                    first user messages. Keeps the longest of each cluster.
 
 The signature stage is OFF unless the pack sets --sig-ratio-min: thresholds are
@@ -48,6 +60,7 @@ policy and live in the pack (PACK-SPEC § 4), the mechanism only knows the shape
 Usage:
   python3 funnel.py enrich  CANDIDATES.tsv OUT.tsv      # add computed columns
   python3 funnel.py run     CANDIDATES.tsv OUT.tsv --preset report [--min-turns 5 ...]
+  python3 funnel.py run     CANDIDATES.tsv OUT.tsv --policy THEME.json
   python3 funnel.py presets                            # list preset parameter sets
 
 The 'run' funnel table goes to stdout; OUT.tsv is the surviving candidates
@@ -162,6 +175,17 @@ class SessionView:
     signature_present: int = 0
     signature_empty: int = 0
     redacted_blocks: int = 0
+    # Credential shapes found anywhere in the RAW file (L8). `credential_kinds`
+    # holds pattern NAMES only, never matched text, so a funnel table or an
+    # enriched TSV can be pasted into an issue without leaking the secret it is
+    # reporting.
+    credential_count: int = 0
+    credential_kinds: list[str] = field(default_factory=list)
+
+    @property
+    def credential_hit(self) -> int:
+        """1 when this file carries at least one credential shape."""
+        return 1 if self.credential_count else 0
 
     @property
     def signature_ratio(self) -> float:
@@ -217,6 +241,42 @@ def is_injected_block(text: str) -> bool:
     return bool(m) and m.group("tag").lower() in INJECTED_BLOCK_TAGS
 
 
+# Credential shapes, by name (L8). High-signal prefixed forms only: the cost of
+# a false positive is a real session withheld, so prose that merely SAYS "my API
+# key" must not match. Scanned over the whole raw line, because a key can sit in
+# tool output or an assistant message, not only in user prose.
+CREDENTIAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("anthropic_key", re.compile(r"sk-ant-[A-Za-z0-9_-]{10,}")),
+    # `(?!ant-)` keeps this from also matching an `sk-ant-…` key, which would
+    # count one secret twice and report it under two vendors. Measured on a
+    # fixture: one `sk-ant-…` reported `anthropic_key,openai_key` and a count of
+    # 2. An inflated disclosure number is worse than none, because the reader
+    # cannot tell it is wrong.
+    ("openai_key", re.compile(r"sk-(?!ant-)(?:proj-)?[A-Za-z0-9_-]{16,}")),
+    ("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}")),
+    ("github_token", re.compile(r"gh[pousr]_[A-Za-z0-9]{16,}")),
+    ("github_pat", re.compile(r"github_pat_[A-Za-z0-9_]{16,}")),
+    ("google_api_key", re.compile(r"AIza[0-9A-Za-z_-]{30,}")),
+    ("slack_token", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}")),
+    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+)
+
+
+def _scan_credentials(v: SessionView, raw: str) -> None:
+    """Accumulate credential shapes from one RAW line of the session file.
+
+    Called from inside the parsers' existing single pass rather than as a second
+    read: the whole file is the scan surface, and reading it twice would double
+    the I/O of the most expensive stage for no gain.
+    """
+    for name, rx in CREDENTIAL_PATTERNS:
+        n = len(rx.findall(raw))
+        if n:
+            v.credential_count += n
+            if name not in v.credential_kinds:
+                v.credential_kinds.append(name)
+
+
 def _count_blocks(v: SessionView, content) -> None:
     """Accumulate thinking-signature state from one `message.content[]`.
 
@@ -250,18 +310,27 @@ def _count_blocks(v: SessionView, content) -> None:
 def parse_claude_code(path: Path) -> SessionView | None:
     """~/.claude/projects/<munged>/<uuid>.jsonl : one JSON object per line."""
     v = SessionView(path=path)
+    # Separates "not this format" from "this format, zero real user turns".
+    # Returning None on an empty user-text list would file a zero-turn session
+    # under "unparseable/unknown format" — a different and false claim — and the
+    # turn floor is 0 in this family, so L1 must be the thing that judges it.
+    saw_record = False
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
                     continue
+                # Whole-line scan: a key can sit in tool output or an assistant
+                # message, not only in the prose a topic stage reads.
+                _scan_credentials(v, line)
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
                 if rec.get("type") not in ("user", "assistant"):
                     continue
+                saw_record = True
                 msg = rec.get("message") or {}
                 role = msg.get("role", rec.get("type"))
                 content = msg.get("content")
@@ -289,9 +358,9 @@ def parse_claude_code(path: Path) -> SessionView | None:
                     v.last_stop_reason = sr
     except OSError:
         return None
-    if not v.user_texts:
+    if not saw_record:
         return None
-    v.first_user_msg = v.user_texts[0]
+    v.first_user_msg = v.user_texts[0] if v.user_texts else ""
     v.fmt = "claude_code"
     return v
 
@@ -320,6 +389,9 @@ def parse_codex(path: Path) -> SessionView | None:
                 line = line.strip()
                 if not line:
                     continue
+                # Whole-line scan, same surface as the claude adapter: tool
+                # output and assistant messages carry keys too.
+                _scan_credentials(v, line)
                 try:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
@@ -496,6 +568,48 @@ def ngrams(s: str, n: int = 5) -> set[str]:
     return {s[i : i + n] for i in range(max(1, len(s) - n + 1))}
 
 
+def stage_noncode(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
+    """Coding-signal exclusion (L7).
+
+    "Mainly not code" is a negative property, so it is judged by coding signals
+    being ABSENT rather than by a non-coding keyword being present. Measured
+    reason this stage exists: a real session reading `你有图片生成能力吗？`
+    carries no translation/writing keyword at all, so a positive-keyword topic
+    stage cannot select it and only an LLM's semantic read would — which is
+    exactly the judgement this family moves out of the model.
+
+    Reads the same cheap prose surface as the topic stage, not the raw file: an
+    exclusion word inside a tool result is the agent's own output, not the
+    user's request, and would reject a session for what the assistant did.
+    """
+    ex = p.get("exclude_keywords") or []
+    if not ex:
+        return "pass", ""
+    hay = norm(" ".join(t[:500] for t in v.user_texts[:3]))
+    for kw in ex:
+        if norm(kw) in hay:
+            return "fail", f"coding signal '{kw}' in user prose"
+    return "pass", ""
+
+
+def stage_credential(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
+    """Credential disclosure (L8) — annotate, never drop.
+
+    A hit does NOT kill the row. Dropping it would export the rest of the batch
+    while hiding that the partner's history carries their own keys, and the
+    caller could not tell a clean batch from a filtered one. So the stage passes
+    and records; `--credential-hard-gate` turns any surviving hit into a
+    whole-batch refusal at the end of the run.
+
+    This is determinism and disclosure, not security. An agent that edits its
+    own artifacts is not stopped here, and no wording in this file should imply
+    it is.
+    """
+    if v.credential_hit:
+        return "pass", f"credential shapes: {','.join(v.credential_kinds)}"
+    return "pass", ""
+
+
 def jaccard(a: set[str], b: set[str]) -> float:
     if not a or not b:
         return 0.0
@@ -561,6 +675,12 @@ STAGES: list[Stage] = [
     Stage("L4 end_turn", stage_end_turn),
     Stage("L5 length", stage_length),
     Stage("L6 topic", stage_topic),
+    # Off until a theme supplies the word list: an empty exclusion set would
+    # otherwise read as "no coding signal found" on every session.
+    Stage("L7 noncode", stage_noncode, requires="exclude_keywords"),
+    # Always on. It never kills, so it costs no session; what it produces is the
+    # disclosure the hard gate and the manifest both read.
+    Stage("L8 credential", stage_credential),
 ]
 
 
@@ -591,6 +711,79 @@ def fmt_int(n: int) -> str:
     return f"{n:,}"
 
 
+# Theme-file key -> the stage parameter it feeds. A theme states buy-side names;
+# the stages have their own. Mapping them here in one table is what lets a theme
+# file be the single source of a threshold without the stages renaming anything.
+POLICY_KEYS: dict[str, str] = {
+    "min_user_turns": "min_turns",
+    "max_tool_ratio": "max_tool_ratio",
+    "sig_ratio_min": "sig_ratio_min",
+    "require_end_turn": "require_end_turn",
+    "dedup_threshold": "dedup_threshold",
+    "min_user_msg_chars": "min_user_msg_chars",
+    "max_first_msg_chars": "max_first_msg_chars",
+}
+
+# Keys a theme may legitimately carry that NO stage consumes at this engine
+# state. Reported once per run rather than applied, because a threshold that
+# looks enforced and is not is worse than one openly missing.
+POLICY_UNENFORCED: frozenset[str] = frozenset({"min_assistant_turns", "topic_match"})
+
+
+def load_policy(path: Path) -> dict:
+    """Read a theme file into stage parameters.
+
+    Three classes of key, three behaviours:
+      * mapped (POLICY_KEYS) -> becomes a stage threshold;
+      * known-unenforced (POLICY_UNENFORCED) -> reported on stderr, not applied;
+      * anything else -> hard error. A mistyped threshold silently ignored would
+        run the funnel at a value nobody chose, which is the failure the whole
+        single-source-of-truth layering exists to prevent.
+    """
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        sys.exit(f"cannot read policy file {path}: {e}")
+    except json.JSONDecodeError as e:
+        sys.exit(f"policy file {path} is not valid JSON: {e}")
+    if not isinstance(doc, dict):
+        sys.exit(f"policy file {path} must contain a JSON object")
+
+    pol = doc.get("policy")
+    if not isinstance(pol, dict):
+        sys.exit(f"policy file {path} has no `policy` object")
+
+    out: dict = {}
+    unknown = sorted(set(pol) - set(POLICY_KEYS) - POLICY_UNENFORCED)
+    if unknown:
+        sys.exit(
+            f"policy file {path} carries keys no stage maps: {', '.join(unknown)} "
+            "— fix the theme file or teach the funnel; a restated or mistyped "
+            "threshold must never pass silently"
+        )
+    for k, dest in POLICY_KEYS.items():
+        if k in pol:
+            out[dest] = pol[k]
+    ignored = sorted(set(pol) & POLICY_UNENFORCED)
+    if ignored:
+        print(
+            f"note: {path.name} sets {', '.join(ignored)}, which no funnel stage "
+            "consumes — NOT enforced by this engine state",
+            file=sys.stderr,
+        )
+
+    # Word lists live at the top level of a theme, not inside `policy`: they are
+    # what the theme IS, while `policy` is how strictly it is applied.
+    kws = doc.get("keywords")
+    if isinstance(kws, list):
+        out["topic_keywords"] = [str(k) for k in kws]
+    ex = doc.get("exclude_keywords")
+    if isinstance(ex, list) and ex:
+        out["exclude_keywords"] = [str(k) for k in ex]
+    out["_preset"] = f"theme:{doc.get('theme', path.stem)}"
+    return out
+
+
 @dataclass
 class StageRow:
     """One row of the printed funnel table — the agent's decision surface.
@@ -609,7 +802,9 @@ class StageRow:
     reason: str = ""
 
 
-def run_funnel(rows: list[dict], p: dict) -> tuple[list[dict], list[tuple[str, str]]]:
+def run_funnel(
+    rows: list[dict], p: dict
+) -> tuple[list[dict], list[tuple[str, str]], dict[str, SessionView]]:
     views: dict[str, SessionView] = {}
     unparseable: list[tuple[str, str]] = []
     alive = rows
@@ -672,7 +867,7 @@ def run_funnel(rows: list[dict], p: dict) -> tuple[list[dict], list[tuple[str, s
     alive, dup_killed = stage_dedup(alive, views, p)
     table.append(
         StageRow(
-            "L7 dedup",
+            "L9 dedup",
             len(alive),
             killed=len(dup_killed),
             reason="; ".join(f"{k} x1" for _, k in dup_killed[:2]),
@@ -728,9 +923,27 @@ def run_funnel(rows: list[dict], p: dict) -> tuple[list[dict], list[tuple[str, s
             f"{'inject':<14} {fmt_int(n_inj_files):>8}   "
             f"{fmt_int(n_inj)} injected user block(s) excluded from user_turns"
         )
+    # Credential disclosure over the SURVIVORS: the hard gate reads the same
+    # set, so the number printed here is the number that can refuse the batch.
+    # Printed even when zero, because "we scanned and found none" and "we never
+    # scanned" must not look alike to an auditor re-running the pack.
+    surv_hits = [
+        v
+        for v in (views.get(r["session_file"]) for r in alive)
+        if v is not None and v.credential_hit
+    ]
+    kinds = sorted({k for v in surv_hits for k in v.credential_kinds})
+    print(
+        f"{'credential':<14} {fmt_int(len(surv_hits)):>8}   "
+        + (
+            f"surviving session(s) carry credential shapes: {','.join(kinds)}"
+            if surv_hits
+            else "no credential shapes in the surviving sessions"
+        )
+    )
     print()
 
-    return alive, unparseable
+    return alive, unparseable, views
 
 
 def main() -> int:
@@ -774,6 +987,24 @@ def main() -> int:
         "contract with pick-sessions --review-only); CANDIDATES "
         "is archived as candidates.full.tsv",
     )
+    pr.add_argument(
+        "--policy",
+        help="a theme JSON file: its `policy` object supplies every threshold "
+        "and its `keywords`/`exclude_keywords` supply the word lists. This is "
+        "the direction path's input — thresholds are policy and live in the "
+        "theme file, so nothing downstream restates a number. Explicit flags "
+        "still win over the file, which is what lets a test pin one value",
+    )
+    pr.add_argument(
+        "--credential-hard-gate",
+        action="store_true",
+        help="exit 3 when any SURVIVING session carries a credential shape, "
+        "before anything is written. The whole batch is refused rather than "
+        "quietly filtered: exporting the remainder would hide that the "
+        "partner's own keys are in their history. Determinism and disclosure, "
+        "not security — an agent that rewrites its own artifacts is not "
+        "stopped by this",
+    )
 
     sub.add_parser("presets", help="list preset parameter sets")
 
@@ -815,6 +1046,12 @@ def main() -> int:
             "signature_ratio",
             "signature_state",
             "redacted_blocks",
+            # Names only, never matched text: an enriched TSV is pasted into
+            # issues and chat, and a column that leaked the secret it reports
+            # would make the disclosure itself the disclosure.
+            "credential_hit",
+            "credential_count",
+            "credential_kinds",
         ]
         out = []
         for row in rows:
@@ -833,6 +1070,9 @@ def main() -> int:
                     f"{v.signature_ratio:.2f}",
                     v.signature_state,
                     str(v.redacted_blocks),
+                    str(v.credential_hit),
+                    str(v.credential_count),
+                    ",".join(v.credential_kinds),
                 )
                 if v
                 else ("",) * len(extra)
@@ -846,8 +1086,15 @@ def main() -> int:
         return 0
 
     # run
-    p = dict(PRESETS[args.preset])
-    p["_preset"] = args.preset
+    # A theme file replaces the preset as the base: the direction path's
+    # thresholds live in the theme, and a preset silently underneath it would be
+    # a second source for the same number. Explicit flags still win over both,
+    # which is what lets a test pin one value without editing a shipped theme.
+    if args.policy:
+        p = load_policy(Path(args.policy))
+    else:
+        p = dict(PRESETS[args.preset])
+        p["_preset"] = args.preset
     if args.min_turns is not None:
         p["min_turns"] = args.min_turns
     if args.max_tool_ratio is not None:
@@ -867,7 +1114,28 @@ def main() -> int:
     if args.sig_ratio_min is not None:
         p["sig_ratio_min"] = args.sig_ratio_min
 
-    alive, _killed = run_funnel(rows, p)
+    alive, _killed, views = run_funnel(rows, p)
+
+    # Hard gate BEFORE any output is written: a refused batch must leave nothing
+    # behind, so the caller cannot mistake a partial write for a delivery.
+    if args.credential_hard_gate:
+        hits = [
+            v
+            for v in (views.get(r["session_file"]) for r in alive)
+            if v is not None and v.credential_hit
+        ]
+        if hits:
+            kinds = sorted({k for v in hits for k in v.credential_kinds})
+            print(
+                f"refusing the batch: {len(hits)} surviving session(s) carry "
+                f"credential shapes ({','.join(kinds)}).\n"
+                "  these are your machine's own history and may hold your keys.\n"
+                "  re-run with --allow-credentials to export them anyway "
+                "(recorded in the manifest), or run the interactive review.\n"
+                "  nothing was written.",
+                file=sys.stderr,
+            )
+            return 3
 
     if args.in_place:
         # Integration contract with curate-sessions/pick-sessions: the picker's

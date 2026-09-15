@@ -334,11 +334,13 @@ These apply to the engine (`scripts/curate-sessions.sh`).
     Recorded: `test/win-zellij-pick.sh` (the Windows regression that drives
     the real picker exactly this way) and the 2026-09-13 issue-#7 run.
 
-## The funnel integration contract (`trajectory-funnel/scripts/funnel.py`)
+## The funnel integration contract (`scripts/funnel.py`)
 
-`trajectory-funnel` is the optional pre-filter stage: it shrinks a large scan
+The funnel is the pre-filter stage — optional on the interactive path, and the
+entire selection on the direction path: it shrinks a large scan
 to the sessions worth reading before any human or agent reads prose. It is
-engine code in this repo, maintained separately from the skill — but it and
+shipped inside the skill (it was once a separate `trajectory-funnel` directory,
+which no longer exists) — and it and
 the picker share OUTDIR's files, and that sharing is a contract this file has
 to record.
 

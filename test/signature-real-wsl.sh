@@ -3,7 +3,7 @@
 # signatures. The point is the three states, on real files, not fixtures.
 set -uo pipefail
 REPO=/home/nixos/workspace/skills
-F="$REPO/skills/trajectory-funnel/scripts/funnel.py"
+F="$REPO/skills/agent-session-batch-export/scripts/funnel.py"
 C="$REPO/skills/agent-session-batch-export/scripts/curate-sessions.sh"
 W=/tmp/acc-sig-wsl
 rm -rf "$W"; mkdir -p "$W"
