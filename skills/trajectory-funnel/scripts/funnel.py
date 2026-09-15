@@ -22,14 +22,22 @@ Stages (fixed order):
   L1 turns      -- user-turn floor. Kills greeting stubs ("hi") in one shot.
   L2 tool_ratio -- assistant tool_use share ceiling. Kills coding-agent runs
                    when the interest is prose (report/roleplay/translation).
-  L3 end_turn   -- last assistant stop_reason == end_turn. Kills truncated
+  L3 signature  -- thinking-signature ratio floor (PACK-SPEC § 4). Kills a
+                   session whose thinking blocks carry no signature (a relay
+                   or client stripped it); SKIPS a session with no thinking
+                   block at all (codex has no signature field) and records the
+                   skip in the reason, so it cannot be read as a pass.
+  L4 end_turn   -- last assistant stop_reason == end_turn. Kills truncated
                    sessions that end mid-tool-call.
-  L4 length     -- user-message length distribution. Kills scaffolding-noise
+  L5 length     -- user-message length distribution. Kills scaffolding-noise
                    sessions (first_prompt is huge, real request is tiny).
-  L5 topic      -- keyword/regex match over extracted user prose. The only
+  L6 topic      -- keyword/regex match over extracted user prose. The only
                    stage that reads message bodies.
-  L6 dedup      -- near-duplicate cluster collapse via 5-gram Jaccard over
+  L7 dedup      -- near-duplicate cluster collapse via 5-gram Jaccard over
                    first user messages. Keeps the longest of each cluster.
+
+The signature stage is OFF unless the pack sets --sig-ratio-min: thresholds are
+policy and live in the pack (PACK-SPEC § 4), the mechanism only knows the shape.
 
 Usage:
   python3 funnel.py enrich  CANDIDATES.tsv OUT.tsv      # add computed columns
@@ -46,9 +54,12 @@ import argparse
 import json
 import re
 import sys
+import textwrap
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 # ---------------------------------------------------------------------------
 # presets: the default parameter sets an agent picks from. Values here come
@@ -130,6 +141,31 @@ class SessionView:
     first_user_msg: str = ""
     user_texts: list[str] = field(default_factory=list)
     fmt: str = ""
+    # Thinking-signature state (PACK-SPEC § 4). `thinking_blocks` is the number
+    # of `type == "thinking"` blocks and always equals present + empty;
+    # `redacted_blocks` counts `redacted_thinking` (a safety-redaction block
+    # with no signature) and is deliberately NOT a thinking block.
+    thinking_blocks: int = 0
+    signature_present: int = 0
+    signature_empty: int = 0
+    redacted_blocks: int = 0
+
+    @property
+    def signature_ratio(self) -> float:
+        """present / (present + empty), 0.0 when there are no thinking blocks."""
+        n = self.signature_present + self.signature_empty
+        return self.signature_present / n if n else 0.0
+
+    @property
+    def signature_state(self) -> str:
+        """The three states PACK-SPEC § 4 records per session.
+
+        `present` covers a mixed session too: the states name what can be
+        measured, and where any signature exists the ratio is what decides.
+        """
+        if not self.thinking_blocks:
+            return "absent"
+        return "present" if self.signature_present else "empty"
 
 
 def _content_text(content) -> str:
@@ -143,6 +179,36 @@ def _content_text(content) -> str:
                 parts.append(b.get("text", ""))
         return "\n".join(parts)
     return ""
+
+
+def _count_blocks(v: SessionView, content) -> None:
+    """Accumulate thinking-signature state from one `message.content[]`.
+
+    Three block types, three behaviours (PACK-SPEC § 4):
+      * `thinking` with a non-empty `signature` -> signed;
+      * `thinking` with `""` -> unsigned. Anthropic documents that `signature`
+        is returned regardless of the `display` setting, so an empty one means
+        something in the path stripped it, not that the model produced none;
+      * `redacted_thinking` -> a safety-redaction block carrying `data` and no
+        signature. It is NOT a thinking block for this purpose and counts
+        toward neither numerator nor denominator, but is counted separately so
+        a redacted-only session stays distinguishable from a plain one.
+    """
+    if not isinstance(content, list):
+        return
+    for b in content:
+        if not isinstance(b, dict):
+            continue
+        t = b.get("type")
+        if t == "thinking":
+            v.thinking_blocks += 1
+            sig = b.get("signature")
+            if isinstance(sig, str) and sig:
+                v.signature_present += 1
+            else:
+                v.signature_empty += 1
+        elif t == "redacted_thinking":
+            v.redacted_blocks += 1
 
 
 def parse_claude_code(path: Path) -> SessionView | None:
@@ -162,7 +228,9 @@ def parse_claude_code(path: Path) -> SessionView | None:
                     continue
                 msg = rec.get("message") or {}
                 role = msg.get("role", rec.get("type"))
-                text = _content_text(msg.get("content"))
+                content = msg.get("content")
+                _count_blocks(v, content)
+                text = _content_text(content)
                 if role == "user":
                     if text.strip():
                         v.user_turns += 1
@@ -170,7 +238,6 @@ def parse_claude_code(path: Path) -> SessionView | None:
                         v.user_texts.append(text)
                 else:
                     v.assistant_turns += 1
-                    content = msg.get("content")
                     if isinstance(content, list):
                         v.tool_uses += sum(
                             1
@@ -245,44 +312,84 @@ def parse_session(path: Path, hint_agent: str) -> SessionView | None:
 
 
 # ---------------------------------------------------------------------------
-# stages: each takes the enrich row + SessionView, returns (alive, reason).
-# Stage order IS the architecture. Add stages at the end of STAGES only after
-# cheaper ones; never reorder without re-checking cost assumptions.
+# stages: each takes the enrich row + SessionView, returns (verdict, reason)
+# where verdict is "pass" | "fail" | "skip". Stage order IS the architecture.
+# Add stages at the end of STAGES only after cheaper ones; never reorder without
+# re-checking cost assumptions.
 # ---------------------------------------------------------------------------
+
+
+# A stage verdict. "skip" exists because one judgement genuinely does not apply
+# to one format: codex has no signature field at all, so failing it would be
+# judging the format rather than the data (PACK-SPEC § 4). A skipped session
+# stays alive and its reason is recorded; it is NOT a pass, and the funnel table
+# prints it under "skipped", never in the pass column.
+StageStatus = Literal["pass", "fail", "skip"]
 
 
 def norm(s: str) -> str:
     return unicodedata.normalize("NFKC", s).lower()
 
 
-def stage_turns(row: dict, v: SessionView, p: dict) -> tuple[bool, str]:
+def stage_turns(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
     if v.user_turns >= p["min_turns"]:
-        return True, ""
-    return False, f"user_turns {v.user_turns} < {p['min_turns']}"
+        return "pass", ""
+    return "fail", f"user_turns {v.user_turns} < {p['min_turns']}"
 
 
-def stage_tool_ratio(row: dict, v: SessionView, p: dict) -> tuple[bool, str]:
+def stage_tool_ratio(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
     total = v.assistant_turns or 1
     ratio = v.tool_uses / total
     if ratio <= p["max_tool_ratio"]:
-        return True, ""
-    return False, f"tool_ratio {ratio:.2f} > {p['max_tool_ratio']}"
+        return "pass", ""
+    return "fail", f"tool_ratio {ratio:.2f} > {p['max_tool_ratio']}"
 
 
-def stage_end_turn(row: dict, v: SessionView, p: dict) -> tuple[bool, str]:
+def stage_signature(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
+    """Thinking-signature ratio floor (PACK-SPEC § 4).
+
+    Three outcomes, and the middle one is the load-bearing decision recorded in
+    PACK-SPEC § 4: codex has no `signature` field at all, and judging it as a
+    ratio of zero would exclude every codex session from a purchase that
+    explicitly covers both formats. So the gate applies where the field exists.
+
+      * zero thinking blocks -> SKIP, with the skip in the reason string;
+      * thinking blocks exist -> the ratio decides.
+
+    `redacted_thinking` is deliberately not counted here: it is a safety
+    redaction with no signature, so a redacted-only session reports `absent`
+    (skipped) rather than `empty` (failed) — the two mean different things.
+
+    The stage only runs when the pack set `sig_ratio_min` (see `stage_gate`), so
+    the key is read directly: a threshold is policy and lives in the pack, and
+    this stage does not invent one.
+    """
+    floor = p["sig_ratio_min"]
+    if not v.thinking_blocks:
+        return "skip", f"no thinking block ({v.fmt}, signature state absent)"
+    if v.signature_ratio < floor:
+        return "fail", (
+            f"signature_ratio {v.signature_ratio:.2f} < {floor:.2f} "
+            f"({v.signature_empty} of {v.thinking_blocks} thinking blocks "
+            f"unsigned)"
+        )
+    return "pass", ""
+
+
+def stage_end_turn(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
     if not p["require_end_turn"]:
-        return True, ""
+        return "pass", ""
     if v.last_stop_reason in ("", "end_turn", "stop"):
-        return True, ""
-    return False, f"last stop_reason={v.last_stop_reason!r}"
+        return "pass", ""
+    return "fail", f"last stop_reason={v.last_stop_reason!r}"
 
 
-def stage_length(row: dict, v: SessionView, p: dict) -> tuple[bool, str]:
+def stage_length(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
     floor = p["min_user_msg_chars"]
     cap = p["max_first_msg_chars"]
     if cap and v.first_user_msg and len(v.first_user_msg) > cap:
         return (
-            False,
+            "fail",
             f"first user msg {len(v.first_user_msg)} > cap {cap} (scaffold noise)",
         )
     if floor and v.user_chars:
@@ -290,20 +397,20 @@ def stage_length(row: dict, v: SessionView, p: dict) -> tuple[bool, str]:
             c for c in v.user_chars[1:] or v.user_chars
         ]  # skip msg#1 (rules/preamble)
         if real and max(real) < floor:
-            return False, f"longest later user msg {max(real)} < {floor}"
-    return True, ""
+            return "fail", f"longest later user msg {max(real)} < {floor}"
+    return "pass", ""
 
 
-def stage_topic(row: dict, v: SessionView, p: dict) -> tuple[bool, str]:
+def stage_topic(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
     kws = p.get("topic_keywords") or []
     if not kws:
-        return True, ""
+        return "pass", ""
     # read the cheapest prose surface first: first 3 user messages, truncated.
     hay = norm(" ".join(t[:500] for t in v.user_texts[:3]))
     for kw in kws:
         if norm(kw) in hay:
-            return True, f"matched '{kw}'"
-    return False, "no topic keyword in first user messages"
+            return "pass", f"matched '{kw}'"
+    return "fail", "no topic keyword in first user messages"
 
 
 def ngrams(s: str, n: int = 5) -> set[str]:
@@ -342,12 +449,25 @@ def stage_dedup(
     return alive, killed
 
 
-STAGES = [
-    ("L1 turns", stage_turns),
-    ("L2 tool_ratio", stage_tool_ratio),
-    ("L3 end_turn", stage_end_turn),
-    ("L4 length", stage_length),
-    ("L5 topic", stage_topic),
+# A stage's `when` says whether this pack asked for it. Stages are the mechanism;
+# which of them a pack turns on and at what threshold is policy and lives in the
+# pack (DESIGN.md: "a new threshold is a pack edit and touches no code"). A
+# gated-off stage is dropped from the table and counted as off, so an empty
+# result can never be mistaken for one that ran and passed everything.
+StageGate = Callable[[dict], bool]
+
+
+def _always(_p: dict) -> bool:
+    return True
+
+
+STAGES: list[tuple[str, Callable[..., tuple[StageStatus, str]], StageGate]] = [
+    ("L1 turns", stage_turns, _always),
+    ("L2 tool_ratio", stage_tool_ratio, _always),
+    ("L3 signature", stage_signature, lambda p: p.get("sig_ratio_min") is not None),
+    ("L4 end_turn", stage_end_turn, _always),
+    ("L5 length", stage_length, _always),
+    ("L6 topic", stage_topic, _always),
 ]
 
 
@@ -378,76 +498,127 @@ def fmt_int(n: int) -> str:
     return f"{n:,}"
 
 
+@dataclass
+class StageRow:
+    """One row of the printed funnel table — the agent's decision surface.
+
+    `killed`, `skipped` and `off` are three different things and are kept apart
+    on purpose: a stage that ran and passed everything, one the pack gated off,
+    and one that skipped the sessions it could not judge must not be readable as
+    each other.
+    """
+
+    name: str
+    survivors: int
+    killed: int = 0
+    skipped: int = 0
+    off: bool = False
+    reason: str = ""
+
+
 def run_funnel(rows: list[dict], p: dict) -> tuple[list[dict], list[tuple[str, str]]]:
     views: dict[str, SessionView] = {}
-    skipped: list[tuple[str, str]] = []
+    unparseable: list[tuple[str, str]] = []
     alive = rows
 
-    table: list[tuple[str, int, int, str]] = []
     total_in = len(rows)
-    table.append(("L0 scan", total_in, total_in, "candidates.tsv from curate scan"))
+    table: list[StageRow] = [
+        StageRow("L0 scan", total_in, reason="candidates.tsv from curate scan")
+    ]
 
-    for name, fn in STAGES:
+    for name, fn, gate in STAGES:
+        if not gate(p):
+            table.append(StageRow(name, len(alive), off=True, reason="off"))
+            continue
         nxt = []
         killed = 0
-        reasons: dict[str, int] = {}
+        n_skip = 0
+        fails: dict[str, int] = {}
+        skips: dict[str, int] = {}
         for row in alive:
             f = row["session_file"]
             v = views.get(f)
             if v is None:
                 v = parse_session(Path(f), row.get("agent", ""))
                 if v is None:
-                    skipped.append((f, "unparseable/unknown format"))
+                    unparseable.append((f, "unparseable/unknown format"))
                     continue
                 views[f] = v
-            ok, why = fn(row, v, p)
-            if ok:
-                nxt.append(row)
-            else:
+            verdict, why = fn(row, v, p)
+            if verdict == "fail":
                 killed += 1
-                key = why.split("(")[0][:60]
-                reasons[key] = reasons.get(key, 0) + 1
+                key = why.split("(")[0][:50]
+                fails[key] = fails.get(key, 0) + 1
+            else:
+                if verdict == "skip":
+                    n_skip += 1
+                    key = why.split("(")[0][:50]
+                    skips[key] = skips.get(key, 0) + 1
+                nxt.append(row)
         alive = nxt
-        top = "; ".join(
-            f"{k} x{c}" for k, c in sorted(reasons.items(), key=lambda kv: -kv[1])[:2]
+        # Fail and skip reasons are both shown, each carrying its class: a reader
+        # must be able to tell "we rejected these" from "we could not judge these"
+        # without opening the manifest.
+        bits = [f"{k} x{c}" for k, c in sorted(fails.items(), key=lambda kv: -kv[1])]
+        bits += [
+            f"skip: {k} x{c}" for k, c in sorted(skips.items(), key=lambda kv: -kv[1])
+        ]
+        table.append(
+            StageRow(name, len(alive), killed, n_skip, reason="; ".join(bits[:3]))
         )
-        table.append((name, len(alive), killed, top or "-"))
 
     # cross-row stage last
     alive, dup_killed = stage_dedup(alive, views, p)
     table.append(
-        (
-            "L6 dedup",
+        StageRow(
+            "L7 dedup",
             len(alive),
-            len(dup_killed),
-            "; ".join(f"{k} x1" for _, k in dup_killed[:2]) or "-",
+            killed=len(dup_killed),
+            reason="; ".join(f"{k} x1" for _, k in dup_killed[:2]),
         )
     )
 
     # print funnel table: the agent's decision surface
-    print("=" * 78)
+    width = 100
+    print("=" * width)
     print(f"preset: {p.get('_preset', 'custom')}   surviving {len(alive)} / {total_in}")
-    print("=" * 78)
-    for name, inn, killed, reason in table:
-        pass
+    print("=" * width)
     prev = total_in
-    for name, inn, killed, reason in table:
-        if name.startswith("L0"):
-            print(f"{name:<14} {fmt_int(inn):>8}   {reason}")
+    # Column where a reason starts; continuation lines hang under it.
+    col = 62
+    for r in table:
+        if r.name.startswith("L0"):
+            print(f"{r.name:<14} {fmt_int(r.survivors):>8}   {r.reason}")
             continue
-        pct = f"({killed / prev * 100:.0f}% of prev)" if prev else ""
-        print(
-            f"{name:<14} {fmt_int(inn):>8}   killed {killed:<5} {pct:<10} {reason[:70]}"
+        if r.off:
+            # A gated-off stage is marked by the literal OFF where a kill count
+            # would sit: "ran and passed everything" and "never ran" must not
+            # look alike.
+            print(f"{r.name:<14} {fmt_int(r.survivors):>8}   {'OFF':<9} {r.reason}")
+            prev = r.survivors
+            continue
+        pct = f"({r.killed / prev * 100:.0f}% of prev)" if prev else ""
+        # The skip column and the skip reasons are both always present. A stage
+        # that skipped sessions must not read as one that passed them, which is
+        # the whole reason the skip is printed rather than folded into `out`.
+        head = (
+            f"{r.name:<14} {fmt_int(r.survivors):>8}   killed {r.killed:<5} "
+            f"skipped {r.skipped:<5}{pct}"
         )
-        prev = inn
-    if skipped:
+        # Reasons are never truncated: a clipped "skip: no thinking block…"
+        # would hide exactly the distinction this column exists to show.
+        lines = textwrap.wrap(r.reason, width - col) if r.reason else [""]
+        for i, ln in enumerate(lines):
+            print(f"{head:<{col}} {ln}" if i == 0 else " " * col + " " + ln)
+        prev = r.survivors
+    if unparseable:
         print(
-            f"{'skipped':<14} {fmt_int(len(skipped)):>8}   unparseable/unknown format"
+            f"{'unparseable':<14} {fmt_int(len(unparseable)):>8}   "
+            "unknown format, not judged"
         )
     print()
 
-    all_killed = [(f, r) for f, r in skipped]
-    return alive, all_killed
+    return alive, unparseable
 
 
 def main() -> int:
@@ -457,7 +628,8 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     pe = sub.add_parser(
-        "enrich", help="add computed columns (turns/tools/stop/chars) to candidates.tsv"
+        "enrich",
+        help="add computed columns (turns/tools/stop/chars/signature) to candidates.tsv",
     )
     pe.add_argument("candidates")
     pe.add_argument("out")
@@ -474,6 +646,14 @@ def main() -> int:
     pr.add_argument("--topic-keywords", help="comma-separated; overrides preset")
     pr.add_argument("--dedup-threshold", type=float)
     pr.add_argument("--no-dedup", action="store_true")
+    pr.add_argument(
+        "--sig-ratio-min",
+        type=float,
+        help="thinking-signature ratio floor (PACK-SPEC § 4). No preset sets "
+        "one: the layer is OFF unless the pack asks for it, so existing "
+        "presets behave exactly as before. Sessions with no thinking block "
+        "are skipped, not failed — codex has no signature field",
+    )
     pr.add_argument(
         "--in-place",
         action="store_true",
@@ -504,12 +684,21 @@ def main() -> int:
     header, rows = read_candidates(Path(args.candidates))
 
     if args.cmd == "enrich":
+        # The signature columns are the pack's `present/empty/absent` state plus
+        # the ratio the gate compares against, so a partner can see the
+        # distribution before committing to an export (PACK-SPEC § 4, § 6).
         extra = [
             "user_turns",
             "assistant_turns",
             "tool_uses",
             "last_stop",
             "first_msg_chars",
+            "thinking_blocks",
+            "signature_present",
+            "signature_empty",
+            "signature_ratio",
+            "signature_state",
+            "redacted_blocks",
         ]
         out = []
         for row in rows:
@@ -521,9 +710,15 @@ def main() -> int:
                     str(v.tool_uses),
                     v.last_stop_reason,
                     str(len(v.first_user_msg)),
+                    str(v.thinking_blocks),
+                    str(v.signature_present),
+                    str(v.signature_empty),
+                    f"{v.signature_ratio:.2f}",
+                    v.signature_state,
+                    str(v.redacted_blocks),
                 )
                 if v
-                else ("", "", "", "", "")
+                else ("", "", "", "", "", "", "", "", "", "", "")
             )
             out.append({**row, **dict(zip(extra, vals))})
         full_header = header + extra
@@ -552,6 +747,8 @@ def main() -> int:
         p["dedup_threshold"] = args.dedup_threshold
     if args.no_dedup:
         p["dedup_threshold"] = 0.0
+    if args.sig_ratio_min is not None:
+        p["sig_ratio_min"] = args.sig_ratio_min
 
     alive, _killed = run_funnel(rows, p)
 
