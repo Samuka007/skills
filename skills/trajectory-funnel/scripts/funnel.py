@@ -449,25 +449,40 @@ def stage_dedup(
     return alive, killed
 
 
-# A stage's `when` says whether this pack asked for it. Stages are the mechanism;
-# which of them a pack turns on and at what threshold is policy and lives in the
-# pack (DESIGN.md: "a new threshold is a pack edit and touches no code"). A
-# gated-off stage is dropped from the table and counted as off, so an empty
-# result can never be mistaken for one that ran and passed everything.
-StageGate = Callable[[dict], bool]
+@dataclass(frozen=True)
+class Stage:
+    """One stage: its label, its predicate, and the pack key it needs.
+
+    `requires` names the pack parameter without which the stage has no threshold
+    to apply, so it cannot run. Stages are the mechanism; which of them a pack
+    turns on, and at what threshold, is policy and lives in the pack
+    (DESIGN.md: "a new threshold is a pack edit and touches no code"). A stage
+    with `requires = None` always runs.
+
+    A gated-off stage KEEPS ITS ROW and prints OFF where its kill count would
+    sit. Dropping the row would make "this layer never ran" and "this layer ran
+    and passed everything" print identically, which is the confusion an auditor
+    re-running a pack over a delivered batch cannot afford.
+    """
+
+    name: str
+    fn: Callable[..., tuple[StageStatus, str]]
+    requires: str | None = None
+
+    def enabled(self, p: dict) -> bool:
+        # `is not None`, not a truthiness test: --sig-ratio-min 0 is a deliberate
+        # floor of zero, not an unset flag.
+        return self.requires is None or p.get(self.requires) is not None
 
 
-def _always(_p: dict) -> bool:
-    return True
-
-
-STAGES: list[tuple[str, Callable[..., tuple[StageStatus, str]], StageGate]] = [
-    ("L1 turns", stage_turns, _always),
-    ("L2 tool_ratio", stage_tool_ratio, _always),
-    ("L3 signature", stage_signature, lambda p: p.get("sig_ratio_min") is not None),
-    ("L4 end_turn", stage_end_turn, _always),
-    ("L5 length", stage_length, _always),
-    ("L6 topic", stage_topic, _always),
+STAGES: list[Stage] = [
+    Stage("L1 turns", stage_turns),
+    Stage("L2 tool_ratio", stage_tool_ratio),
+    # Needs the threshold, so it is off until the pack supplies one.
+    Stage("L3 signature", stage_signature, requires="sig_ratio_min"),
+    Stage("L4 end_turn", stage_end_turn),
+    Stage("L5 length", stage_length),
+    Stage("L6 topic", stage_topic),
 ]
 
 
@@ -526,10 +541,18 @@ def run_funnel(rows: list[dict], p: dict) -> tuple[list[dict], list[tuple[str, s
         StageRow("L0 scan", total_in, reason="candidates.tsv from curate scan")
     ]
 
-    for name, fn, gate in STAGES:
-        if not gate(p):
-            table.append(StageRow(name, len(alive), off=True, reason="off"))
+    for st in STAGES:
+        if not st.enabled(p):
+            table.append(
+                StageRow(
+                    st.name,
+                    len(alive),
+                    off=True,
+                    reason=f"off (this pack sets no {st.requires})",
+                )
+            )
             continue
+        name, fn = st.name, st.fn
         nxt = []
         killed = 0
         n_skip = 0

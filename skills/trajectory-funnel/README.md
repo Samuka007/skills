@@ -47,8 +47,18 @@ table is the only decision surface you need for re-tuning.
 
 **The stage is off unless the pack sets `sig_ratio_min`.** No preset sets one,
 so a run that does not ask for the layer behaves exactly as it did before it
-existed — and the printed table says `OFF` in that row, so a stage that never
-ran cannot be misread as one that ran and passed everything. Turn it on with:
+existed. When it is off **its row is still printed**, with `OFF` where the kill
+count would sit and the missing pack key named in the reason:
+
+```
+L3 signature         13   OFF       off (this pack sets no sig_ratio_min)
+```
+
+That is deliberate, and it is the property to preserve when extending this:
+every stage keeps a row whether or not it ran. A reader auditing a delivered
+batch has only this table, and if the row vanished, "this layer ran and skipped
+codex" and "this layer never ran" would print identically. Turn the layer on
+with:
 
 ```bash
 python3 scripts/funnel.py run /tmp/cur/candidates.tsv /tmp/cur/.unused --in-place \
@@ -154,7 +164,9 @@ repo-only `docs/` directory:
 - Cheap stages before expensive ones: metadata < line scan < JSON parse.
 - Unknown session formats are **skipped and counted**, never guessed.
 - Thresholds are policy and live in the pack; a stage that needs one is gated
-  off until the pack supplies it, and says `OFF` when it did not run.
+  off until the pack supplies it, prints `OFF` when it did not run, and **keeps
+  its row either way** — a stage that never ran must not look like one that
+  passed everything.
 - Output stays compatible with the existing `screen.tsv` contract
   (candidates columns + `suggested` + `reason`).
 

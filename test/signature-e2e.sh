@@ -162,6 +162,15 @@ row="$(sed -n 's/^\(L3 signature.*\)$/\1/p' "$WORK/run.off")"
 has "table marks it OFF"  "$row" "OFF"
 hasnt "no kill is claimed" "$row" "killed 1"
 chk "survivors unchanged" "$(awk -F'\t' 'NR>1' "$WORK/out.tsv" | wc -l | tr -d ' ')" "5"
+# The row must still be THERE. An auditor telling "the layer ran and skipped
+# codex" from "the layer never ran" has only the table to read, so a vanished
+# row would make those two identical.
+chk "the off row is still printed, not dropped" \
+  "$(grep -c '^L3 signature' "$WORK/run.off")" "1"
+# L0 scan + the seven stages.
+chk "and every stage keeps its row" \
+  "$(grep -cE '^L[0-9] ' "$WORK/run.off")" "8"
+has "the off reason names the key that turns it on" "$row" "sig_ratio_min"
 
 # --------------------------------- C: on -> present passes, empty fails, skips
 echo
