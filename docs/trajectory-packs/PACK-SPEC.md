@@ -75,7 +75,11 @@ Two measurements that shaped the table:
   reasoning. Key on `signature`.
 - **`redacted_thinking` is a different thing.** It is a safety-redaction block
   with a `data` field, not an omitted-but-signed thinking block. A session
-  carrying only `redacted_thinking` has no signature to check.
+  carrying only `redacted_thinking` has no signature to check. Measured on the
+  Windows store: two sessions carry one such block each, both on
+  `claude-opus-5`. They are counted separately (`redacted_blocks`) and belong to
+  neither the `present` nor the `empty` class — folding them into `empty` would
+  report a safety redaction as a relay defect.
 
 ## 4. Signature: measured, gated, and recorded
 
@@ -89,9 +93,17 @@ three states applied to each session:
 
 | State | Meaning |
 |---|---|
-| `present` | thinking blocks with non-empty `signature` — the ratio is computed |
+| `present` | at least one thinking block carries a non-empty `signature` — the ratio is computed and the floor decides |
 | `empty` | thinking blocks exist but `signature` is an empty string — observed in a local claude_code session whose model was `claude-opus-4-8-fast`; a relay or client stripped it |
 | `absent` | no thinking blocks at all — codex, and any client that never requested thinking |
+
+`present` is not a claim that every block is signed. A session can be mixed —
+measured in the implementation's own fixtures, three signed blocks and six empty
+ones — and in that case the label is `present` while `signature_ratio` carries
+the truth (0.33 there). The floor is what decides; the label only says whether a
+ratio was computable at all. A batch where most sessions report `present` with a
+low ratio is a batch from a relay that strips some blocks, which is exactly the
+kind of finding this state exists to surface.
 
 `empty` fails the layer. `absent` **skips** it and records the skip, the same
 way codex skips the closure layer: a format that has no signature concept
