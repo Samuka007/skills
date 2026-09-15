@@ -31,7 +31,7 @@ Cheap stages run before expensive ones: metadata → line scan → JSON parse.
 | L1 turns | user-turn floor | greeting stubs ("hi") |
 | L2 tool_ratio | assistant tool_use share ceiling | tool-heavy coding runs when the interest is prose |
 | L3 signature | thinking-signature ratio floor, **off by default** | sessions whose thinking blocks carry no signature (a relay or client stripped it) |
-| L4 end_turn | last assistant `stop_reason == end_turn` | truncated sessions ending mid-tool-call |
+| L4 end_turn | last assistant `stop_reason == end_turn` | truncated sessions ending mid-tool-call; codex skips (no `stop_reason` field in the format); a claude_code session whose last assistant record lacks the field fails |
 | L5 length | user-message length distribution | scaffold noise (huge first prompt, tiny real request) |
 | L6 topic | keyword/regex over extracted user prose | off-topic sessions (the only stage reading message bodies) |
 | L7 dedup | 5-gram Jaccard over first user messages, cross-row | near-duplicate template clusters (keeps the longest) |
@@ -86,6 +86,35 @@ distinguishable from one that was stripped.
 `enrich` carries the same measurement as columns (`thinking_blocks`,
 `signature_present`, `signature_empty`, `signature_ratio`, `signature_state`,
 `redacted_blocks`) so the distribution can be seen before exporting.
+
+### L4 end_turn: codex skips, an absent claude stop_reason fails
+
+Codex writes no `stop_reason` on any record, so the closure layer cannot judge
+it at all: it skips, and the skip is printed in its own column with the reason
+`no stop_reason in this format`. A delivered batch must be able to say "the
+closure layer passed this file" and "the closure layer did not apply to this
+file" as two different statements (PACK-SPEC § 5).
+
+The two formats must not be symmetric: an absent `stop_reason` on a
+**claude_code** session is a finding about the file — the format has the field,
+so its absence at the last assistant record means that record was truncated or
+rewritten — and the session **fails**. The stage reads the last record's value,
+not the last non-empty one, so a truncated tail cannot inherit the closure of
+an earlier turn.
+
+### Codex's injected blocks are not user turns
+
+Codex delivers its own `<environment_context>` (and `<user_instructions>`,
+`<skills_instructions>`) blocks as ordinary `role: "user"` messages. The codex
+adapter excludes any user message that is entirely one of those tagged blocks
+from `user_turns`, `user_chars` and `user_texts`, matching the block
+structurally — the whole message is the tagged block, never a substring test on
+prose that merely mentions the tag. The excluded count is carried in `enrich`
+as the `injected_user_messages` column next to `user_turns`, so the correction
+is visible instead of silently folded into the number. This matters twice
+downstream: `first_user_msg` is the first *real* request (the L6 topic stage
+and L7 dedup both read it), and the pack's `min_user_turns` floor means real
+turns, not injected ones.
 
 ## Presets
 

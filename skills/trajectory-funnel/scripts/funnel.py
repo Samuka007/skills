@@ -11,8 +11,10 @@ Design rules (do not violate when extending):
   * Python standard library only. No third-party deps. This must run anywhere
     python3 runs, including a scoop-installed Windows python.
   * Streaming: one session file is held in memory at a time, never the corpus.
-  * Every stage reports (in, out, killed, reason) -- the funnel table is the
-    agent's only decision surface for re-tuning.
+  * Every stage reports (in, out, killed, skipped, reason) -- the funnel table
+    is the agent's only decision surface for re-tuning. A `skip` is NOT a pass:
+    it says the judgement did not apply to that format, and it is printed in its
+    own column so "the layer passed" and "the layer did not apply" stay apart.
   * Cheap stages run before expensive ones. Metadata < line scan < JSON parse.
   * Input candidates.tsv comes from curate-sessions.sh scan (header: agent cwd
     mtime size_bytes n_lines first_prompt session_file). Output stays compatible
@@ -28,7 +30,11 @@ Stages (fixed order):
                    block at all (codex has no signature field) and records the
                    skip in the reason, so it cannot be read as a pass.
   L4 end_turn   -- last assistant stop_reason == end_turn. Kills truncated
-                   sessions that end mid-tool-call.
+                   sessions that end mid-tool-call; SKIPS codex, whose records
+                   carry no stop_reason at all (PACK-SPEC § 5), and FAILS a
+                   claude_code session whose last assistant record is missing
+                   the field -- an empty string read as a pass is how the codex
+                   skip went unnoticed in the first place.
   L5 length     -- user-message length distribution. Kills scaffolding-noise
                    sessions (first_prompt is huge, real request is tiny).
   L6 topic      -- keyword/regex match over extracted user prose. The only
@@ -140,6 +146,13 @@ class SessionView:
     user_chars: list[int] = field(default_factory=list)
     first_user_msg: str = ""
     user_texts: list[str] = field(default_factory=list)
+    # User-role records that are entirely a tagged context block the client
+    # injected (codex's `<environment_context>`, `<user_instructions>`,
+    # `<skills_instructions>`). Counted here so the number is visible rather
+    # than silently dropped: `user_turns` is real turns, this says how many
+    # the raw file appeared to have. Every codex session carries at least one,
+    # so without this the turn floor is off by one for codex input.
+    injected_user_messages: int = 0
     fmt: str = ""
     # Thinking-signature state (PACK-SPEC § 4). `thinking_blocks` is the number
     # of `type == "thinking"` blocks and always equals present + empty;
@@ -179,6 +192,29 @@ def _content_text(content) -> str:
                 parts.append(b.get("text", ""))
         return "\n".join(parts)
     return ""
+
+
+# The blocks a client injects into its own session file as a `user` message.
+# Matched structurally — the whole message is one tagged block — never by a
+# substring anywhere in the text: a partner discussing `<environment_context>`
+# in prose must stay a real user turn.
+INJECTED_BLOCK_TAGS = (
+    "environment_context",
+    "user_instructions",
+    "skills_instructions",
+)
+_BLOCK_RE = re.compile(r"<(?P<tag>[A-Za-z0-9_:-]+)>(?s:.*)</(?P=tag)>\s*\Z")
+
+
+def is_injected_block(text: str) -> bool:
+    """True when `text` is nothing but one tagged context block.
+
+    The tag must be one the client injects (an agent writing `<example>…` by
+    hand stays a real turn) and the block must own the whole message, so a
+    quoted block inside a longer request is not swallowed.
+    """
+    m = _BLOCK_RE.match(text.strip())
+    return bool(m) and m.group("tag").lower() in INJECTED_BLOCK_TAGS
 
 
 def _count_blocks(v: SessionView, content) -> None:
@@ -245,8 +281,12 @@ def parse_claude_code(path: Path) -> SessionView | None:
                             if isinstance(b, dict) and b.get("type") == "tool_use"
                         )
                     sr = rec.get("stop_reason") or msg.get("stop_reason") or ""
-                    if sr:
-                        v.last_stop_reason = sr
+                    # Assigned unconditionally: this is the LAST assistant
+                    # record's value, and an absent one there is the finding
+                    # the closure stage fails on. Keeping the last non-empty
+                    # value instead would let a truncated tail inherit the
+                    # closure of an earlier turn and read as a pass.
+                    v.last_stop_reason = sr
     except OSError:
         return None
     if not v.user_texts:
@@ -257,8 +297,23 @@ def parse_claude_code(path: Path) -> SessionView | None:
 
 
 def parse_codex(path: Path) -> SessionView | None:
-    """~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl : response_item lines."""
+    """~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl : response_item lines.
+
+    Codex marks its own injected context as an ordinary `user` message, so a
+    filter on `payload.type == "message"` alone counts it as a turn. Measured
+    on a one-shot translation rollout: `user_turns` reported 2 for a session
+    with exactly one real request, the extra being `<environment_context>`.
+    Every codex session carries it, which puts the pack's `min_user_turns`
+    floor one turn too low for codex input.
+    """
     v = SessionView(path=path)
+    # Distinguishes "this is not a codex file" (no message record at all ->
+    # not this format, return None) from "this is a codex file whose only user
+    # records were injected blocks" (a real session with zero real turns -> let
+    # L1 judge it). Without the split, excluding the blocks would file such a
+    # file under "unparseable/unknown format", which is a different claim and a
+    # false one.
+    saw_message = False
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -274,13 +329,19 @@ def parse_codex(path: Path) -> SessionView | None:
                 pl = rec.get("payload") or {}
                 pt = pl.get("type")
                 if pt == "message" and pl.get("role") in ("user", "assistant"):
+                    saw_message = True
                     text = "".join(
                         c.get("text", "")
                         for c in (pl.get("content") or [])
                         if isinstance(c, dict)
                     )
                     if pl.get("role") == "user":
-                        if text.strip():
+                        if is_injected_block(text):
+                            # Visible, not dropped: the count is the record of
+                            # what the raw file looked like, and a session of
+                            # nothing but injected blocks is not a conversation.
+                            v.injected_user_messages += 1
+                        elif text.strip():
                             v.user_turns += 1
                             v.user_chars.append(len(text))
                             v.user_texts.append(text)
@@ -292,9 +353,9 @@ def parse_codex(path: Path) -> SessionView | None:
                     v.tool_uses += 1
     except OSError:
         return None
-    if not v.user_texts:
+    if not saw_message:
         return None
-    v.first_user_msg = v.user_texts[0]
+    v.first_user_msg = v.user_texts[0] if v.user_texts else ""
     v.fmt = "codex"
     return v
 
@@ -377,9 +438,26 @@ def stage_signature(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, st
 
 
 def stage_end_turn(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
+    """Session closure (PACK-SPEC § 5).
+
+    Codex writes no `stop_reason` on any message record — measured: 0 of 25
+    rollouts carry the field — so the layer cannot judge a codex session at
+    all, and it SKIPS rather than passing. The distinction is the point: "the
+    closure layer passed this batch" and "the closure layer did not apply to
+    this batch" are different statements and the manifest must not merge them.
+
+    An absent `stop_reason` on a **claude_code** session is a different thing
+    and is a FAIL: that format does have the field, so its absence means the
+    last assistant record was truncated or rewritten. Reading the empty string
+    as a pass is exactly how the codex skip went unnoticed.
+    """
     if not p["require_end_turn"]:
         return "pass", ""
-    if v.last_stop_reason in ("", "end_turn", "stop"):
+    if v.fmt == "codex":
+        return "skip", "no stop_reason in this format"
+    if not v.last_stop_reason:
+        return "fail", "last stop_reason absent on claude_code"
+    if v.last_stop_reason in ("end_turn", "stop"):
         return "pass", ""
     return "fail", f"last stop_reason={v.last_stop_reason!r}"
 
@@ -639,6 +717,17 @@ def run_funnel(rows: list[dict], p: dict) -> tuple[list[dict], list[tuple[str, s
             f"{'unparseable':<14} {fmt_int(len(unparseable)):>8}   "
             "unknown format, not judged"
         )
+    # The turn counts above are post-correction, so the correction is stated
+    # rather than left implicit: an auditor re-running this pack has to be able
+    # to see that injected blocks were excluded and by how much (PACK-SPEC § 3
+    # buys "user messages, excluding the environment preamble").
+    n_inj_files = sum(1 for v in views.values() if v.injected_user_messages)
+    if n_inj_files:
+        n_inj = sum(v.injected_user_messages for v in views.values())
+        print(
+            f"{'inject':<14} {fmt_int(n_inj_files):>8}   "
+            f"{fmt_int(n_inj)} injected user block(s) excluded from user_turns"
+        )
     print()
 
     return alive, unparseable
@@ -710,8 +799,12 @@ def main() -> int:
         # The signature columns are the pack's `present/empty/absent` state plus
         # the ratio the gate compares against, so a partner can see the
         # distribution before committing to an export (PACK-SPEC § 4, § 6).
+        # `injected_user_messages` sits next to `user_turns` for the same
+        # reason: the turn floor is read off this TSV, and a raw-block count
+        # that was excluded has to be visible or the correction is invisible.
         extra = [
             "user_turns",
+            "injected_user_messages",
             "assistant_turns",
             "tool_uses",
             "last_stop",
@@ -729,6 +822,7 @@ def main() -> int:
             vals = (
                 (
                     str(v.user_turns),
+                    str(v.injected_user_messages),
                     str(v.assistant_turns),
                     str(v.tool_uses),
                     v.last_stop_reason,
@@ -741,7 +835,7 @@ def main() -> int:
                     str(v.redacted_blocks),
                 )
                 if v
-                else ("", "", "", "", "", "", "", "", "", "", "")
+                else ("",) * len(extra)
             )
             out.append({**row, **dict(zip(extra, vals))})
         full_header = header + extra
