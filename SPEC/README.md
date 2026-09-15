@@ -8,9 +8,9 @@ exactly one home:
   cannot live there: status, acceptance evidence, and decisions taken after the
   issue was written.
 - **What we buy, and how a delivered batch is checked** → the files under
-  `docs/trajectory-packs/`. Those are the buy-side specification and they are
-  normative for every pack item; the issues implement them.
-- **How the skill family is laid out** → `docs/trajectory-packs/DESIGN.md`.
+  `docs/session-export/`. Those are the buy-side specification and they are
+  normative for every export item; the issues implement them.
+- **How the skill family is laid out** → `docs/session-export/DESIGN.md`.
 
 Rejected alternative: duplicating a spec into several files. Two copies drift —
 one gets edited during review and the other does not, and a reader then cannot
@@ -46,14 +46,14 @@ tell which was agreed. One canonical location per kind, pointed at from here.
 
 - **Where each kind of truth lives (single source of truth).** Three things,
   three homes, never restated elsewhere:
-  - **Buy-side numbers and口径** → `docs/trajectory-packs/PACK-SPEC.md`, and the
-    pack JSON files it describes. A theme skill points at them; it does not
-    repeat a threshold in prose.
-  - **Family layout and layering** → `docs/trajectory-packs/DESIGN.md`.
+  - **Buy-side numbers and口径** → `docs/session-export/PACK-SPEC.md`, and the
+    theme JSON files under `skills/agent-session-batch-export/themes/`. Prose
+    points at them; it does not repeat a threshold.
+  - **Family layout and layering** → `docs/session-export/DESIGN.md`.
   - **Item status, acceptance evidence, and decisions taken after an issue was
     written** → this file, plus the issue body for the canonical requirement.
-  A number in two places is a drift waiting to happen. When a theme skill needs
-  to state a threshold it names the pack key, not the value.
+  A number in two places is a drift waiting to happen. When a document needs to
+  state a threshold it names the theme key, not the value.
 - **Signature is measured where the field exists, skipped where it does not.**
   Anthropic's documentation is explicit that a thinking block always carries
   `signature`, independent of `display`; an empty signature therefore means a

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""trajectory-funnel: deterministic multi-stage filter over agent-session candidates.
+"""The funnel: deterministic multi-stage filter over agent-session candidates.
 
-Mechanism layer of the trajectory-export skill family. The STAGE ORDER and the
+Mechanism layer of the session-export skill family. The STAGE ORDER and the
 SHAPE of each stage's predicate are fixed here; the PARAMETERS (thresholds,
 keywords, presets) come from the CLI, normally transcribed by an agent from a
 presets skill. The agent never parses session JSONL itself -- it reads the
@@ -54,8 +54,9 @@ Stages (fixed order):
   L9 dedup      -- near-duplicate cluster collapse via 5-gram Jaccard over
                    first user messages. Keeps the longest of each cluster.
 
-The signature stage is OFF unless the pack sets --sig-ratio-min: thresholds are
-policy and live in the pack (PACK-SPEC § 4), the mechanism only knows the shape.
+The signature stage is OFF unless the theme sets --sig-ratio-min: thresholds are
+policy and live in the theme file (PACK-SPEC § 4); the mechanism knows only the
+shape.
 
 Usage:
   python3 funnel.py enrich  CANDIDATES.tsv OUT.tsv      # add computed columns
@@ -372,7 +373,7 @@ def parse_codex(path: Path) -> SessionView | None:
     filter on `payload.type == "message"` alone counts it as a turn. Measured
     on a one-shot translation rollout: `user_turns` reported 2 for a session
     with exactly one real request, the extra being `<environment_context>`.
-    Every codex session carries it, which puts the pack's `min_user_turns`
+    Every codex session carries it, which puts the theme's `min_user_turns`
     floor one turn too low for codex input.
     """
     v = SessionView(path=path)
@@ -493,9 +494,9 @@ def stage_signature(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, st
     redaction with no signature, so a redacted-only session reports `absent`
     (skipped) rather than `empty` (failed) — the two mean different things.
 
-    The stage only runs when the pack set `sig_ratio_min` (see `stage_gate`), so
-    the key is read directly: a threshold is policy and lives in the pack, and
-    this stage does not invent one.
+    The stage only runs when the theme set `sig_ratio_min` (see `Stage.enabled`),
+    so the key is read directly: a threshold is policy and lives in the theme
+    file, and this stage does not invent one.
     """
     floor = p["sig_ratio_min"]
     if not v.thinking_blocks:
@@ -643,13 +644,13 @@ def stage_dedup(
 
 @dataclass(frozen=True)
 class Stage:
-    """One stage: its label, its predicate, and the pack key it needs.
+    """One stage: its label, its predicate, and the theme key it needs.
 
-    `requires` names the pack parameter without which the stage has no threshold
-    to apply, so it cannot run. Stages are the mechanism; which of them a pack
-    turns on, and at what threshold, is policy and lives in the pack
-    (DESIGN.md: "a new threshold is a pack edit and touches no code"). A stage
-    with `requires = None` always runs.
+    `requires` names the theme parameter without which the stage has no
+    threshold to apply, so it cannot run. Stages are the mechanism; which of
+    them a theme turns on, and at what threshold, is policy and lives in the
+    theme file (DESIGN.md: "a new threshold is a theme-file edit and touches no
+    code"). A stage with `requires = None` always runs.
 
     A gated-off stage KEEPS ITS ROW and prints OFF where its kill count would
     sit. Dropping the row would make "this layer never ran" and "this layer ran
@@ -670,7 +671,7 @@ class Stage:
 STAGES: list[Stage] = [
     Stage("L1 turns", stage_turns),
     Stage("L2 tool_ratio", stage_tool_ratio),
-    # Needs the threshold, so it is off until the pack supplies one.
+    # Needs the threshold, so it is off until the theme supplies one.
     Stage("L3 signature", stage_signature, requires="sig_ratio_min"),
     Stage("L4 end_turn", stage_end_turn),
     Stage("L5 length", stage_length),
@@ -789,7 +790,7 @@ class StageRow:
     """One row of the printed funnel table — the agent's decision surface.
 
     `killed`, `skipped` and `off` are three different things and are kept apart
-    on purpose: a stage that ran and passed everything, one the pack gated off,
+    on purpose: a stage that ran and passed everything, one the theme gated off,
     and one that skipped the sessions it could not judge must not be readable as
     each other.
     """
@@ -926,7 +927,7 @@ def run_funnel(
     # Credential disclosure over the SURVIVORS: the hard gate reads the same
     # set, so the number printed here is the number that can refuse the batch.
     # Printed even when zero, because "we scanned and found none" and "we never
-    # scanned" must not look alike to an auditor re-running the pack.
+    # scanned" must not look alike to an auditor re-running the theme.
     surv_hits = [
         v
         for v in (views.get(r["session_file"]) for r in alive)
@@ -975,7 +976,7 @@ def main() -> int:
         "--sig-ratio-min",
         type=float,
         help="thinking-signature ratio floor (PACK-SPEC § 4). No preset sets "
-        "one: the layer is OFF unless the pack asks for it, so existing "
+        "one: the layer is OFF unless the theme asks for it, so existing "
         "presets behave exactly as before. Sessions with no thinking block "
         "are skipped, not failed — codex has no signature field",
     )
@@ -1027,7 +1028,7 @@ def main() -> int:
     header, rows = read_candidates(Path(args.candidates))
 
     if args.cmd == "enrich":
-        # The signature columns are the pack's `present/empty/absent` state plus
+        # The signature columns are the buy-side `present/empty/absent` state plus
         # the ratio the gate compares against, so a partner can see the
         # distribution before committing to an export (PACK-SPEC § 4, § 6).
         # `injected_user_messages` sits next to `user_turns` for the same

@@ -2,9 +2,9 @@
 name: agent-session-batch-export
 description: "Curate claude_code/codex session transcripts into a corpus of RAW .jsonl trajectory material for agentic analysis. Scans candidates by workspace/topic, lets an agent screen them and a human mark keep/drop, then copies the kept sessions byte-for-byte with a sha256 manifest. Use when extracting trajectory material, building a dataset of past agent sessions, filtering sessions by workspace, project, or topic, or when the user wants to pick conversations to keep from their agent history."
 license: MIT
-compatibility: "Requires bash 3.2+ with a POSIX userland (awk, sed, find, stat, cmp, sort, cut, tr, mktemp, sha256). Windows Git Bash bundles all of that; add jq and ripgrep (rg) via scoop or winget. Optional: fzf for the interactive review step. Reads ~/.claude/projects and ~/.codex/sessions. Runs on Linux, macOS, and Windows Git Bash."
+compatibility: "Requires bash 3.2+ with a POSIX userland (awk, sed, find, stat, cmp, sort, cut, tr, mktemp, sha256) and jq. Windows Git Bash bundles the userland; add jq via scoop or winget. The deterministic funnel and every direction export additionally require python3 (standard library only) — on Windows install it with `winget install Python.Python.3.13`, because the python3 in PATH is usually the Microsoft Store alias stub. The interactive scan/review/finalize path needs no Python. Optional: fzf for the interactive review, ripgrep for faster topic matching. Reads ~/.claude/projects and ~/.codex/sessions. Runs on Linux, macOS, and Windows Git Bash."
 metadata:
-  verified-platforms: "GNU/Linux; Windows (Git Bash via .ps1 wrappers) with scoop jq+ripgrep"
+  verified-platforms: "GNU/Linux; Windows (Git Bash via .ps1 wrappers) with scoop jq+ripgrep. Direction exports verified on GNU/Linux; on Windows they need python3 installed first"
 ---
 
 # Curate agent sessions into trajectory material
@@ -12,7 +12,9 @@ metadata:
 Turns a large pile of claude_code / codex transcripts into a small, provably
 unmodified corpus that an agent can analyze.
 
-`scripts/curate-sessions.sh` — no index, no daemon, no network, no Python.
+`scripts/curate-sessions.sh` — no index, no daemon, no network. The interactive
+path below needs no Python; the deterministic direction path runs
+`scripts/funnel.py` and requires `python3`.
 
 The core property: **the kept files are byte-identical copies of the originals**,
 each with a recorded sha256. Nothing is re-rendered, summarized, or converted,

@@ -8,9 +8,9 @@
 # enumeration below reproduces what `curate-sessions.sh scan` would emit, since
 # scan hardcodes $HOME and would read the WSL store instead.
 #
-# The pack's shipped translation thresholds (min_user_msg_chars 5, from
-# packs/themes/translation.json) are what make the one-shot request survive; at
-# the direction default of 20 it is killed by the length layer.
+# The shipped translation thresholds (min_user_msg_chars 5, from
+# skills/agent-session-batch-export/themes/translation.json) are what make the
+# one-shot request survive; at the family default of 20 the length layer kills it.
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 F="$REPO/skills/agent-session-batch-export/scripts/funnel.py"
@@ -49,41 +49,49 @@ with open(out, "w", encoding="utf-8") as fh:
 print(f"enumerated {len(rows)} codex sessions from {root}")
 PY
 
-KEYWORDS="翻译,互译,译成,翻译成,中译,英译,日译,translate,translation,localize"
+THEME="$REPO/skills/agent-session-batch-export/themes/translation.json"
 
-# Case A — what the pack ships. The one-shot request does not qualify: the
-# translation theme holds min_user_turns at the pack default of 5, because the
-# reference bundle buys translation as multi-turn work (its two entries have 7
-# and 8 user turns). A run under the shipped thresholds selects nothing here.
+# Case A — the shipped theme file, read by the engine itself (`--policy`), with
+# no flag overriding anything. This is the arm that means something: it asserts
+# what a partner's machine actually does.
+#
+# An earlier version of this test hand-copied the thresholds onto the command
+# line instead. That made the arm evidence about a set of literals rather than
+# about the shipped theme, and it showed: the funnel printed
+# `L7 noncode OFF (this theme sets no exclude_keywords)` because a flag run
+# carries no word lists. Asking the file is the only way to test the file.
+#
+# `--no-dedup` is deliberately NOT passed. It sets the similarity threshold to
+# 0.0 while the stage tests `jaccard >= threshold`, so it collapses every
+# survivor instead of disabling the stage (SPEC item 18). It killed a
+# non-duplicate here and made the count look right for the wrong reason.
 echo
-echo "== A. pack thresholds as shipped (min_user_turns 5) =="
-python3 "$F" run "$W/candidates.tsv" "$W/out-pack.tsv" \
-  --preset report --min-turns 5 --min-user-msg-chars 5 \
-  --max-tool-ratio 100 --no-end-turn --no-dedup --max-first-msg-chars 1000000 \
-  --topic-keywords "$KEYWORDS" > "$W/funnel-pack.txt" 2>&1
-sed -n '/^L0/,$p' "$W/funnel-pack.txt"
-
-# Case B — the override. The mechanism and the policy are separate: a theme
-# that buys multi-turn work today can be bought as one-shot work for one run,
-# without editing the pack or the code.
-echo
-echo "== B. overridden for one run (min-user-msg-chars 5, min-turns 1) =="
+echo "== A. the shipped translation theme, as a partner runs it =="
 python3 "$F" run "$W/candidates.tsv" "$W/out.tsv" \
-  --preset report --min-turns 1 --min-user-msg-chars 5 \
-  --max-tool-ratio 100 --no-end-turn --no-dedup --max-first-msg-chars 1000000 \
-  --topic-keywords "$KEYWORDS" > "$W/funnel.txt" 2>&1
+  --policy "$THEME" > "$W/funnel.txt" 2>&1
 sed -n '/^L0/,$p' "$W/funnel.txt"
+
+# Case B — the same theme with one value overridden, which is the layering
+# claim: a flag still wins over the file, so a theme can be bought under
+# different terms for one run without editing the shipped policy. The reference
+# bundle's own translation entries have 7 and 8 user turns, so a floor of 5
+# reproduces its口径 — and rejects the one-shot request this store holds.
+echo
+echo "== B. same theme, min_user_turns overridden to the reference's 5 =="
+python3 "$F" run "$W/candidates.tsv" "$W/out-strict.tsv" \
+  --policy "$THEME" --min-turns 5 > "$W/funnel-strict.txt" 2>&1
+sed -n '/^L0/,$p' "$W/funnel-strict.txt"
 
 echo
 echo "== survivors =="
-python3 - "$W/out-pack.tsv" "$W/out.tsv" <<'PY'
+python3 - "$W/out.tsv" "$W/out-strict.tsv" <<'PY'
 import csv, json, sys, os
 def rows(p):
     return list(csv.DictReader(open(p, encoding="utf-8"), delimiter="\t"))
-print(f"  A (pack thresholds): {len(rows(sys.argv[1]))} survivor(s)")
-b = rows(sys.argv[2])
-print(f"  B (overridden):      {len(b)} survivor(s)")
-for r in b:
+a = rows(sys.argv[1])
+print(f"  A (shipped theme):        {len(a)} survivor(s)")
+print(f"  B (min_user_turns -> 5):  {len(rows(sys.argv[2]))} survivor(s)")
+for r in a:
     for line in open(r["session_file"], encoding="utf-8", errors="replace"):
         try:
             o = json.loads(line)

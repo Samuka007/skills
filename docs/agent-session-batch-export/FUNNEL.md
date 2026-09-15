@@ -1,7 +1,7 @@
-# trajectory-funnel
+# The funnel engine (`scripts/funnel.py`)
 
 A deterministic multi-stage pre-filter over agent-session candidates. It sits
-between a [`agent-session-batch-export`](../agent-session-batch-export/README.md)
+between a [`agent-session-batch-export`](../../skills/agent-session-batch-export/README.md)
 `scan` (which enumerates every session matching metadata filters) and the
 human/agent screening step, and answers one question cheaply: **of this
 pile, which sessions are even worth attention?** A raw scan of a busy
@@ -11,18 +11,20 @@ near-duplicates. Reading prose over all of that wastes the scarcest resource
 in the pipeline: the agent's attention. The funnel kills the predictable
 junk mechanically, stage by stage, so screening lands only on survivors.
 
-Mechanism layer of the trajectory-export skill family. **The stage order and
+Mechanism layer of the session-export skill family. **The stage order and
 the shape of each stage's predicate are fixed here; the parameters come from
-the CLI** — normally transcribed by an agent from the presets below. The
+a theme file (`--policy`) or from flags** — never from this code. The
 agent never parses session JSONL itself: it reads the funnel table and the
 enriched candidates TSV this script prints.
 
-> Engine code in this repo, not an installable agent skill (there is no
-> `SKILL.md` here); it is invoked from the sibling skill's pipeline. No
-> third-party dependencies: Python 3 standard library only, runs anywhere
-> `python3` runs, streaming (one session file in memory at a time).
+> Ships inside `agent-session-batch-export` as `scripts/funnel.py`. It was once
+> a separate `trajectory-funnel` directory with no `SKILL.md`, which made it
+> invisible to the installer while other skills told users to install it; that
+> is why it now lives in the skill that uses it. No third-party dependencies:
+> Python 3 standard library only, runs anywhere `python3` runs, streaming (one
+> session file in memory at a time).
 
-## The seven stages
+## The nine stages
 
 Cheap stages run before expensive ones: metadata → line scan → JSON parse.
 
@@ -34,21 +36,23 @@ Cheap stages run before expensive ones: metadata → line scan → JSON parse.
 | L4 end_turn | last assistant `stop_reason == end_turn` | truncated sessions ending mid-tool-call; codex skips (no `stop_reason` field in the format); a claude_code session whose last assistant record lacks the field fails |
 | L5 length | user-message length distribution | scaffold noise (huge first prompt, tiny real request) |
 | L6 topic | keyword/regex over extracted user prose | off-topic sessions (the only stage reading message bodies) |
-| L7 dedup | 5-gram Jaccard over first user messages, cross-row | near-duplicate template clusters (keeps the longest) |
+| L7 noncode | coding-signal exclusion over user prose, **off unless the theme sets `exclude_keywords`** | sessions that are coding work. "Mainly not code" is a negative property, so absence of coding signal is what qualifies — a positive keyword list cannot select a session like `你有图片生成能力吗？` |
+| L8 credential | credential shapes over the **complete raw JSONL** | nothing: it annotates and never drops, because exporting the remainder would hide the finding. `--credential-hard-gate` turns any surviving hit into a whole-batch refusal (exit 3) |
+| L9 dedup | 5-gram Jaccard over first user messages, cross-row | near-duplicate template clusters (keeps the longest) |
 
 Every stage reports `(in, out, killed, skipped, reason)` — the printed funnel
 table is the only decision surface you need for re-tuning.
 
-### L3 signature: measured per session, gated by the pack
+### L3 signature: measured per session, gated by the theme
 
-`trajectory-funnel` reads what the session file says; the threshold is
-[`docs/trajectory-packs/PACK-SPEC.md`](../../docs/trajectory-packs/PACK-SPEC.md)
-§ 4 and comes in through the pack, never from this code.
+The funnel reads what the session file says; the threshold is
+[`docs/session-export/PACK-SPEC.md`](../session-export/PACK-SPEC.md)
+§ 4 and comes in through the theme file, never from this code.
 
-**The stage is off unless the pack sets `sig_ratio_min`.** No preset sets one,
+**The stage is off unless the theme sets `sig_ratio_min`.** No preset sets one,
 so a run that does not ask for the layer behaves exactly as it did before it
 existed. When it is off **its row is still printed**, with `OFF` where the kill
-count would sit and the missing pack key named in the reason:
+count would sit and the missing theme key named in the reason:
 
 ```
 L3 signature         13   OFF       off (this pack sets no sig_ratio_min)
@@ -134,7 +138,7 @@ Presets are data, not code — every parameter can be overridden by a flag.
 
 ```bash
 C=/path/to/agent-session-batch-export/scripts/curate-sessions.sh
-F=/path/to/trajectory-funnel/scripts/funnel.py
+F=/path/to/agent-session-batch-export/scripts/funnel.py
 OUT=/tmp/cur
 
 bash $C scan -o $OUT --workspace myproject --min-lines 20   # -> OUT/candidates.tsv
@@ -167,7 +171,7 @@ counts, last stop reason, chars, signature state — without filtering),
 
 ## Demo
 
-![The picker reading a funnel's survivors: pre-selection, TAB override each way, ENTER, verified 2/2](../../docs/agent-session-batch-export/demo.gif)
+![The picker reading a funnel's survivors: pre-selection, TAB override each way, ENTER, verified 2/2](demo.gif)
 
 The downstream half of this pipeline — the picker reading a funnel's survivors —
 recorded on synthetic sessions:
@@ -180,10 +184,9 @@ It covers pre-selection, a human overriding the suggestion in both directions,
 and the byte-identity check after `finalize`. GitHub cannot play an asciicast
 (the player is a `<script>` embed, which its Markdown filters out), so the GIF
 above is what renders inline; `asciinema play` is the interactive path. The
-recording, that GIF and the reproduction script live in the sibling skill's
-repo-only `docs/` directory:
-[`demo-transcript.txt`](../../docs/agent-session-batch-export/demo-transcript.txt)
-(text version) and [`demo.sh`](../../docs/agent-session-batch-export/demo.sh).
+recording, that GIF and the reproduction script sit beside this file:
+[`demo-transcript.txt`](demo-transcript.txt)
+(text version) and [`demo.sh`](demo.sh).
 
 ## Design rules (do not violate when extending)
 
@@ -200,4 +203,4 @@ repo-only `docs/` directory:
   (candidates columns + `suggested` + `reason`).
 
 The full stage docstring lives at the top of
-[`scripts/funnel.py`](scripts/funnel.py).
+[`scripts/funnel.py`](../../skills/agent-session-batch-export/scripts/funnel.py).
