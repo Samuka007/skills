@@ -182,6 +182,75 @@ chk "and no exported session claims it" "0" \
   "$(jq -r '[.[] | select((.themes // []) | index("multimodal"))] | length' "$W/r1/manifest.json")"
 
 echo
+echo "== the confirmation prompt is a real prompt in a real terminal =="
+# Driven through tmux rather than a redirect, because the prompt is a thing the
+# user SEES: a non-interactive run of the same code asserts the exit status, not
+# the surface. The asymmetry is why this is worth a terminal — a wrongly
+# withheld export costs one re-run, and a wrongly authorised one has already
+# left the machine.
+if ! command -v tmux >/dev/null 2>&1; then
+  printf '  FAIL %s\n' "tmux absent: the prompt cannot be driven, so it is NOT verified"
+  fail=$((fail + 1))
+else
+  SESS="seb$$"
+  tmux kill-session -t "$SESS" 2>/dev/null || true
+  tmux new-session -d -s "$SESS" -x 200 -y 50
+  wait_for() { # pattern
+    local i
+    for i in $(seq 1 60); do
+      sleep 0.5
+      tmux capture-pane -p -t "$SESS" | grep -q "$1" && return 0
+    done
+    return 1
+  }
+
+  # `n` must abort and leave nothing behind. A prompt that treated any answer
+  # as consent would pass a redirect-based test and fail here.
+  rm -rf "$W/prompt-no"
+  tmux send-keys -t "$SESS" \
+    "HOME='$H' bash '$RUNNER' --direction-file '$DIRJSON' -o '$W/prompt-no'" Enter
+  if wait_for 'export these'; then
+    printf '  ok   %s\n' "the prompt is rendered on a terminal"; pass=$((pass + 1))
+    prompt_line="$(tmux capture-pane -p -t "$SESS" | grep -o 'export these .* \[y/N\]' | sed -n 1p)"
+    has "and it defaults to no, visibly" "$prompt_line" "[y/N]"
+    tmux send-keys -t "$SESS" "n" Enter
+    if wait_for 'aborted at the confirmation prompt'; then
+      printf '  ok   %s\n' "answering n aborts"; pass=$((pass + 1))
+    else
+      printf '  FAIL %s\n' "answering n did not abort"; fail=$((fail + 1))
+    fi
+    chk "and nothing was written" "absent" \
+      "$(test -e "$W/prompt-no" && echo present || echo absent)"
+  else
+    printf '  FAIL %s\n' "the prompt never appeared"; fail=$((fail + 1))
+  fi
+
+  # `y` proceeds, and the manifest must record that a human confirmed THIS
+  # batch — the one field that distinguishes it from the --yolo run above.
+  rm -rf "$W/prompt-yes"
+  tmux send-keys -t "$SESS" \
+    "HOME='$H' bash '$RUNNER' --direction-file '$DIRJSON' -o '$W/prompt-yes'" Enter
+  if wait_for 'export these'; then
+    tmux send-keys -t "$SESS" "y" Enter
+    if wait_for 'export-direction: done'; then
+      printf '  ok   %s\n' "answering y exports"; pass=$((pass + 1))
+      chk "and the manifest records the batch as confirmed" "true" \
+        "$(jq -r '.[0].batch_confirmed' "$W/prompt-yes/manifest.json")"
+      chk "while the selection is still the funnel's" "funnel-deterministic" \
+        "$(jq -r '.[0].selection' "$W/prompt-yes/manifest.json")"
+      chk "and it is the same session the yolo run chose" \
+        "$(jq -r '.[0].sha256' "$W/r1/manifest.json")" \
+        "$(jq -r '.[0].sha256' "$W/prompt-yes/manifest.json")"
+    else
+      printf '  FAIL %s\n' "answering y did not complete"; fail=$((fail + 1))
+    fi
+  else
+    printf '  FAIL %s\n' "the prompt never appeared on the second run"; fail=$((fail + 1))
+  fi
+  tmux kill-session -t "$SESS" 2>/dev/null || true
+fi
+
+echo
 printf 'SESSION-EXPORT-BASE E2E: %s (%d passed' \
   "$([[ "$fail" -eq 0 ]] && echo "ALL CHECKS PASSED" || echo "$fail FAILED")" "$pass"
 [[ "$fail" -gt 0 ]] && printf ', %d failed' "$fail"
