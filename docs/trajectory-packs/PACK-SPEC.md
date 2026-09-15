@@ -139,11 +139,12 @@ finding about the channel, not about the data.
 ## 6. Delivery
 
 One archive containing the kept session files verbatim plus a manifest. The
-archive format follows the platform (`zip` on Windows, `tar.gz` elsewhere) and
-the command picks it; the partner does not.
+partner never picks the format; the command does.
 
-How the format is actually produced, measured rather than assumed — because
-"zip on Windows" is not implementable as stated on a real Git Bash:
+The intended format follows the platform — `zip` on Windows, `tar.gz`
+elsewhere — and how it is actually produced was measured rather than assumed,
+because "zip on Windows" is not implementable as stated on a real Git Bash.
+The rungs, in order:
 
 | Wanted | Rung, in order | Writes |
 |---|---|---|
