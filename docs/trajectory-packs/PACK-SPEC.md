@@ -222,3 +222,16 @@ accepted, and would forbid partial value.
 Re-run the pack over the received files and compare against the manifest. Every
 session the manifest lists must re-qualify, and every count must reproduce. A
 batch that fails this is returned, not haggled over.
+
+Two properties the acceptance depends on, both asserted by
+`test/signature-e2e.sh` rather than left incidental:
+
+- **Every stage keeps a row in the funnel table, whether or not it ran.** A
+  stage the pack did not enable prints `OFF` where its kill count would sit, and
+  names the pack key it is waiting for — `off (this pack sets no sig_ratio_min)`
+  rather than a bare `off`. Without this, "never ran" and "ran and passed
+  everything" are the same observation, and the audit above cannot distinguish
+  a batch that cleared the signature layer from one where the layer was never
+  switched on.
+- **A skip is counted in its own column, next to the kill count.** A stage that
+  applied to three sessions and skipped twenty-four prints both numbers.
