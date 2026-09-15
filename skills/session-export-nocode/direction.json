@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "direction": "nocode",
+  "skill": "session-export-nocode",
+  "themes": [
+    "translation",
+    "rewriting",
+    "generation",
+    "role-play",
+    "data-analysis",
+    "multimodal"
+  ]
+}
