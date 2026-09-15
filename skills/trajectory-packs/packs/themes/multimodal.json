@@ -1,0 +1,22 @@
+{
+  "pack_id": "theme-multimodal",
+  "theme": "multimodal",
+  "label": {
+    "en": "multimodal",
+    "zh": "多模态"
+  },
+  "reference_coverage": 3,
+  "report_only": true,
+  "keywords": [],
+  "counters": [
+    "image_blocks",
+    "document_blocks"
+  ],
+  "overrides": {},
+  "_provenance": {
+    "report_only": "the reference distinguishes native image blocks from attachment-text injection and records both; locally, 61 files across four stores contain zero native image blocks, so this theme can only ever report counts",
+    "counters": "two counters because the reference names two forms; a session with a PDF attachment is not a session with an image"
+  },
+  "pack_version": "1.0.0",
+  "kind": "theme"
+}

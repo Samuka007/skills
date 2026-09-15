@@ -1,0 +1,31 @@
+{
+  "pack_id": "theme-translation",
+  "theme": "translation",
+  "label": {
+    "en": "translation",
+    "zh": "翻译"
+  },
+  "reference_coverage": 2,
+  "keywords": [
+    "翻译",
+    "互译",
+    "译成",
+    "翻译成",
+    "中译",
+    "英译",
+    "日译",
+    "translate",
+    "translation",
+    "localize"
+  ],
+  "overrides": {
+    "min_user_turns": 5,
+    "min_user_msg_chars": 5
+  },
+  "_provenance": {
+    "min_user_msg_chars": "DECISION: a translation request is often one short sentence ('翻译 桃花源记 为日文' is 11 characters) while the work is in the answer. The pack default of 20 would reject the task type this theme exists to buy.",
+    "min_user_turns": "held at the pack default: the reference's two translation entries have 7 and 8 user turns, so the theme is bought as multi-turn work, not as one-shot requests"
+  },
+  "pack_version": "1.0.0",
+  "kind": "theme"
+}
