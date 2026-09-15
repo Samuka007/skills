@@ -72,6 +72,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import textwrap
@@ -443,6 +444,38 @@ def parse_session(path: Path, hint_agent: str) -> SessionView | None:
         if v is not None:
             return v
     return None
+
+
+def session_path(raw: str) -> Path:
+    """Turn a candidates.tsv path into one THIS interpreter can open.
+
+    curate-sessions.sh enumerates sessions with `find`, so under Git Bash the
+    paths it writes are MSYS form (`/c/Users/...`). A Windows-native python —
+    the scoop install this file's header promises to support — cannot open
+    that: `Path('/c/Users/...').exists()` is False, `open()` raises
+    FileNotFoundError, the parsers catch OSError and return None, and every
+    session is reported as "unparseable/unknown format". Measured on a real
+    Windows host: 34 of 34 candidates unparseable via `/c/...`, and the same
+    file parsed (user_turns=1) via `C:/...`.
+
+    The count was not lying — the parse genuinely failed — which is why this
+    had to be fixed here, at the one boundary where a TSV string becomes a
+    Path, rather than by loosening the parsers.
+
+    Left alone when it already opens, so a POSIX path that really is `/c/...`
+    on Linux keeps working. Drive-letter rewriting is only attempted when the
+    literal path does not exist AND this is a Windows interpreter.
+    """
+    p = Path(raw)
+    if os.name != "nt" or p.exists():
+        return p
+    # /c/Users/... or /cygdrive/c/Users/... -> C:/Users/...
+    m = re.match(r"^/(?:cygdrive/)?([A-Za-z])(/.*)?$", raw)
+    if m:
+        cand = Path(f"{m.group(1).upper()}:{m.group(2) or '/'}")
+        if cand.exists():
+            return cand
+    return p
 
 
 # ---------------------------------------------------------------------------
@@ -836,7 +869,7 @@ def run_funnel(
             f = row["session_file"]
             v = views.get(f)
             if v is None:
-                v = parse_session(Path(f), row.get("agent", ""))
+                v = parse_session(session_path(f), row.get("agent", ""))
                 if v is None:
                     unparseable.append((f, "unparseable/unknown format"))
                     continue
@@ -1056,7 +1089,7 @@ def main() -> int:
         ]
         out = []
         for row in rows:
-            v = parse_session(Path(row["session_file"]), row.get("agent", ""))
+            v = parse_session(session_path(row["session_file"]), row.get("agent", ""))
             vals = (
                 (
                     str(v.user_turns),
