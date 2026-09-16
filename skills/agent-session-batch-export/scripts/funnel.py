@@ -3,9 +3,11 @@
 
 Mechanism layer of the session-export skill family. The STAGE ORDER and the
 SHAPE of each stage's predicate are fixed here; the PARAMETERS (thresholds,
-keywords, presets) come from the CLI, normally transcribed by an agent from a
-presets skill. The agent never parses session JSONL itself -- it reads the
-funnel table and the enriched candidates TSV this script prints.
+keywords) come from one of two data sources: a shipped theme JSON via
+`--policy` (the direction path -- the purchaser can read exactly what was
+bought), or a built-in preset via `--preset` (ad-hoc runs, where no theme
+exists; PRESETS below). The agent never parses session JSONL itself -- it
+reads the funnel table and the enriched candidates TSV this script prints.
 
 Design rules (do not violate when extending):
   * Python standard library only. No third-party deps. This must run anywhere
