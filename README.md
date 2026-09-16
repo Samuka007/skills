@@ -32,6 +32,53 @@ installer copies and never removes, so a machine that installed the old one
 still has it; [`docs/RELEASE-NOTES.md`](docs/RELEASE-NOTES.md) says what to
 delete and what to install.
 
+## Using
+
+After install both skills live in `~/.agents/skills/`. Three entry points,
+by who drives:
+
+**Ask your agent.** Agents with skill discovery (codex, claude code, opencode,
+…) find the installed skill from your request and drive the scripts for you.
+Say what you want in plain words — what kind of sessions, what to exclude,
+whether you will review the selection:
+
+> 把我最近的非代码会话（翻译、改写这类）整理成一个可以直接交给别人的
+> 语料包，不用人工审。
+
+The selection on the direction path is deterministic — a Python funnel applies
+the theme thresholds, the agent never judges prose. Skipping review is explicit
+or absent: the launcher derives `--yolo` only from the exact phrases
+`直接导出` / `无需确认` / `不用确认` / `无须确认`, and refuses the flag
+passed by hand; anything else stops at a confirmation prompt.
+
+**The direction command.** The non-code direction is human-invoked; the
+launcher owns the opt-out policy above, so you never touch `--yolo` yourself:
+
+```bash
+bash ~/.agents/skills/session-export-nocode/scripts/session-export-nocode.sh \
+  --request "直接导出非代码会话" \
+  --out ./out
+```
+
+**Run the pipeline yourself.** Interactive, one command, lands in the fzf
+picker; your ENTER finalizes and verifies every kept copy byte-identical in
+one go. On Windows invoke the `.ps1` wrappers instead — they pin Git Bash and
+declare the sessions are the Windows side's:
+
+```bash
+bash ~/.agents/skills/agent-session-batch-export/scripts/pick-sessions.sh \
+  -o ./cur --agent codex --min-lines 20
+```
+
+Prerequisites: `jq` and `python3` (Windows Git Bash: `scoop install jq
+python`). On Windows the `python3` on PATH is usually the Microsoft Store
+stub, which is why the scripts probe by *executing* rather than by presence.
+
+What every path produces: `OUT/keep/*.jsonl` (byte-identical originals),
+`OUT/manifest.json` (sha256 + provenance per entry), and a delivery archive.
+Stage-by-stage detail, the hand-off gate, and the interactive/headless
+matrix: [skill README](skills/agent-session-batch-export/README.md).
+
 ## Layout
 
 ```
