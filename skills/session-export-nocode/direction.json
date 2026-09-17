@@ -1,13 +1,45 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "direction": "nocode",
   "skill": "session-export-nocode",
+  "override": {
+    "exclude_keywords": [
+      "shellcheck",
+      "stack trace",
+      "traceback",
+      "compile error",
+      "segfault",
+      "git rebase",
+      "git merge",
+      "pull request",
+      "dockerfile",
+      "docker compose",
+      "kubectl",
+      "systemctl",
+      "nixos-rebuild",
+      "npm install",
+      "pip install",
+      "cargo build",
+      "pytest",
+      "unit test",
+      "重构",
+      "报错",
+      "调试",
+      "编译",
+      "部署",
+      "服务器配置",
+      "数据库迁移"
+    ]
+  },
   "themes": [
-    "translation",
-    "rewriting",
-    "generation",
-    "role-play",
-    "data-analysis",
-    "multimodal"
-  ]
+    { "theme": "translation" },
+    { "theme": "rewriting" },
+    { "theme": "generation" },
+    { "theme": "role-play" },
+    { "theme": "data-analysis" },
+    { "theme": "multimodal" }
+  ],
+  "_provenance": {
+    "override.exclude_keywords": "DECISION: 'mainly not code' is a negative property, so coding signals are what disqualify. Shared by every theme in this family — held here, at the direction layer, so the word list is stated once and every theme run judges with the same one"
+  }
 }

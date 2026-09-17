@@ -34,9 +34,12 @@ bash 3.2+ and the POSIX userland your machine already has.
 | verify | picker does it automatically | `verified: N/N copies byte-identical` |
 
 `funnel` is `scripts/funnel.py`, shipped inside this skill: it shrinks a large
-scan to the sessions worth attention before any human or agent reads prose. On
-the interactive path above it is optional — without it the pipeline is exactly
-the four stages of `SKILL.md`, and with it everything downstream of scan is
+scan to the sessions worth attention before any human or agent reads prose. It
+always reads the skill's global policy (`scripts/policy.json`); `--theme NAME`
+adds a topic word list, and flags or an `--override-file` replace policy keys
+per key. On the interactive path above it is optional — without it the
+pipeline is exactly the four stages of `SKILL.md`, and with it everything
+downstream of scan is
 unchanged. On the **direction path** it is not optional: it *is* the selection.
 Maintainer notes for the engine: [`docs/agent-session-batch-export/FUNNEL.md`](../../docs/agent-session-batch-export/FUNNEL.md).
 
@@ -51,8 +54,12 @@ bash scripts/export-direction.sh \
   --direction-file /path/to/direction.json -o ./out --yolo
 ```
 
-Every threshold comes from `themes/<name>.json`; the direction file carries only
-a theme list. There is no `screen.tsv` step on this path, so there is no row for
+Every threshold comes from the global policy, `scripts/policy.json`; theme
+files carry identity — `keywords`, `label` — plus an optional per-key
+`override`, and the direction file names themes plus the overrides that define
+the purchase (the noncode direction's root `override` supplies the
+`exclude_keywords` word list that defines "non-code"). There is no
+`screen.tsv` step on this path, so there is no row for
 an agent to fill and none for it to get wrong: the funnel's survivors are
 written straight into `decisions.tsv`. An agent running this may read the funnel
 table and abort on a catastrophic run; editing its output is not one of the
@@ -95,10 +102,12 @@ OUT=/tmp/cur
 # 1. scan — enumerate candidates -> $OUT/candidates.tsv
 bash $C scan -o $OUT --workspace myproject --min-lines 20
 
-# 2. funnel — shrink the pile to the survivors (report preset here; optional)
-python3 "$F" run "$OUT/candidates.tsv" "$OUT/.funnel-unused" --preset report --in-place
-#    --in-place replaces candidates.tsv with the survivors (full set archived
-#    as candidates.full.tsv; the second path argument is unused in this mode)
+# 2. funnel — shrink the pile to the survivors (global policy; optional)
+python3 "$F" run "$OUT/candidates.tsv" "$OUT/.funnel-unused" --in-place
+#    no --theme: the global policy alone filters turns, tools, length, dedup.
+#    --theme translation adds that theme's topic word list. --in-place
+#    replaces candidates.tsv with the survivors (full set archived as
+#    candidates.full.tsv; the second path argument is unused in this mode)
 #    and rebuilds screen.tsv with empty suggested/reason columns.
 
 # 3. screen — fill suggested (keep|drop) + reason in $OUT/screen.tsv
@@ -213,8 +222,11 @@ what replaced which part, and the base-skill-only install.
 bash 3.2+ with a POSIX userland (awk, sed, find, stat, cmp, sort, cut, tr,
 mktemp, sha256). Windows Git Bash bundles all of that; add `jq` and
 `python3` via scoop or winget. `python3` is required, not optional: the
-selection engine is `scripts/funnel.py`. Optional: `fzf` for the interactive
-review, `ripgrep` for faster topic matching.
+selection engine is `scripts/funnel.py`. The engine also hard-requires
+`scripts/policy.json`, the shared quality standard, which ships inside the
+skill — a copy missing that file stops with an error instead of guessing
+defaults. Optional: `fzf` for the interactive review, `ripgrep` for faster
+topic matching.
 
 Sessions are read from `$HOME/.claude/projects` and `$HOME/.codex/sessions`
 of the environment the script runs in — see

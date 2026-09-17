@@ -20,11 +20,20 @@ npx skills add Samuka007/skills \
 ## Run
 
 Read the bundled [`direction.json`](direction.json) before invoking the
-launcher. It is the direction's single metadata file and declares exactly these
-themes:
+launcher. It is the direction's single metadata file. Its `themes` array
+declares exactly these themes, each resolved by name against the base skill's
+`themes/`:
 
 `translation`, `rewriting`, `generation`, `role-play`, `data-analysis`,
 `multimodal`.
+
+Each entry is a `{ "theme": NAME }` object with an optional per-theme
+`override`; the six shipped entries are plain names. What the purchase
+constrains lives in the direction's root `override`: it supplies the
+`exclude_keywords` word list — the coding-signal terms whose absence defines
+"non-code". The direction carries no thresholds; the shared quality standard
+is the base skill's `scripts/policy.json`, and no file in this skill restates
+it.
 
 Pass the user's complete request as one `--request` argument. Choose an output
 directory, then run:
@@ -46,8 +55,9 @@ agent-session-batch-export/scripts/export-direction.sh \
 ```
 
 The launcher is only an adapter. The base runner owns scanning, the Python
-funnel, theme thresholds, credential checks, selection, copying, manifests, and
-delivery. Do not implement or substitute any of those stages here.
+funnel, the policy thresholds and their overrides, credential checks,
+selection, copying, manifests, and delivery. Do not implement or substitute
+any of those stages here.
 
 ## Review policy
 

@@ -119,8 +119,19 @@ not edit `candidates.tsv`, `screen.tsv`, `decisions.tsv`, or the funnel's output
 and you may not choose keep/drop rows. Doing so replaces a reproducible
 selection with your judgement, which is the one thing this path removes.
 
-Every threshold lives in `themes/<name>.json`; a direction file carries only a
-theme list. Never restate a threshold when reporting — name the theme key.
+The numbers live in one global policy: `scripts/policy.json` is the shared
+quality standard, and the engine resolves it beside itself — a missing file is
+a hard error, not a default. A theme file (`themes/<name>.json`) carries theme
+identity only: `keywords`, `label`, provenance, and an optional `override`
+that replaces policy keys for that theme (translation moves the per-message
+floor, role-play tightens the tool ceiling, and `themes/coding.json` reads the
+coding-signal word list as a positive topic). A direction file names themes
+and carries overrides where the purchase constrains something — the noncode
+direction's root `override` supplies `exclude_keywords`, the word list that
+defines "non-code". Values compose per key, later winning: flags, then the
+direction entry, then the direction root, then the theme, then the global
+policy; `null` clears a key, an empty list turns that stage OFF. Never restate
+a threshold when reporting — name the key.
 
 ### The two length controls are unrelated
 
@@ -129,14 +140,15 @@ floor on this script (and on `scan`). Pass `0` and no scanned file is dropped
 for being short. It is a flag, and on this path it is the only length control
 you can set.
 
-Whether a session's MESSAGES are long enough is separate policy. Each theme
-carries a per-message character floor at the key `policy.min_user_msg_chars`,
-applied by the funnel's L5 `length` stage. The runner exposes no option for it —
-a direction's selection must be reproducible from the theme file alone — so a
-`--min-lines 0` run still drops sessions whose user turns fall under that key.
-The funnel table reports the kill truthfully (`longest later user msg N < M`),
-and the runner prints the theme key a caller would have to change. Name that
-key when reporting; never restate the value.
+Whether a session's MESSAGES are long enough is separate policy. A per-message
+character floor sits in the global policy at the key `min_user_msg_chars`,
+applied by the funnel's L5 `length` stage; a theme or direction `override` may
+replace it, and translation's theme does. The runner exposes no option for it —
+a direction's selection must be reproducible from the policy and its overrides
+alone — so a `--min-lines 0` run still drops sessions whose user turns fall
+under that key. The funnel table reports the kill truthfully (`longest later
+user msg N < M`), and the runner prints the key a caller would have to change.
+Name that key when reporting; never restate the value.
 
 Two failures are actionable rather than fatal, and both belong to the user:
 
@@ -249,7 +261,7 @@ The picker runs this check itself after finalizing and prints
 - `--topic REGEX` — extended regex over extracted prose
 - `--since YYYY-MM-DD`
 - `--min-lines N` — drop stub sessions: a FILE line-count floor, unrelated to
-  the per-MESSAGE floor each theme carries (see Direction export)
+  the per-MESSAGE floor in the global policy (see Direction export)
 
 `review`:
 - `--ui fzf` (default when fzf is present) or `--ui tsv` — tsv emits

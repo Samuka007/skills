@@ -259,13 +259,13 @@ echo "== B: first_user_msg is the real message, not the block =="
 # The real request is 11 characters; the injected block is hundreds. This column
 # is the only place the funnel shows which message `first_user_msg` holds.
 chk "oneshot: first message is the real one" "$(col codex-oneshot.jsonl first_msg_chars)" "11"
-python3 "$F" run "$WORK/candidates-2.tsv" "$WORK/out-cap300.tsv" --preset report \
+python3 "$F" run "$WORK/candidates-2.tsv" "$WORK/out-cap300.tsv" \
   --min-turns 0 --max-tool-ratio 1.0 --no-end-turn --dedup-threshold 1.0 \
   --topic-keywords "" --max-first-msg-chars 300 --min-user-msg-chars 0 \
   > "$WORK/run.cap300" 2>&1
 chk "cap 300: nothing is killed as scaffold noise" "$(cell L5 5 run.cap300)" "0"
 hasnt "no scaffold-noise kill is claimed" "$(row 'L5 length' run.cap300)" "scaffold noise"
-python3 "$F" run "$WORK/candidates-2.tsv" "$WORK/out-cap10.tsv" --preset report \
+python3 "$F" run "$WORK/candidates-2.tsv" "$WORK/out-cap10.tsv" \
   --min-turns 0 --max-tool-ratio 1.0 --no-end-turn --dedup-threshold 1.0 \
   --topic-keywords "" --max-first-msg-chars 10 --min-user-msg-chars 0 \
   > "$WORK/run.cap10" 2>&1
@@ -273,7 +273,7 @@ has "cap 10 kills the 11-char real request" \
   "$(row 'L5 length' run.cap10)" "first user msg 11 > cap 10"
 # If the block were still the first message, the identical pair below would
 # differ by cwd alone and survive as two instead of collapsing.
-python3 "$F" run "$WORK/candidates.tsv" "$WORK/out-dup.tsv" --preset report \
+python3 "$F" run "$WORK/candidates.tsv" "$WORK/out-dup.tsv" \
   --min-turns 0 --max-tool-ratio 1.0 --no-end-turn --topic-keywords "" \
   --max-first-msg-chars 0 --min-user-msg-chars 0 > "$WORK/run.dup" 2>&1
 # dedup is L9 since the noncode and credential stages joined the order.
@@ -285,7 +285,7 @@ echo
 echo "== C: closure — codex skips, claude with no stop_reason fails =="
 # --dedup-threshold 1.0 collapses only exact duplicates, so the counts below are
 # the closure layer's own and nothing is removed before it runs.
-python3 "$F" run "$WORK/candidates.tsv" "$WORK/out-closure.tsv" --preset report \
+python3 "$F" run "$WORK/candidates.tsv" "$WORK/out-closure.tsv" \
   --min-turns 0 --max-tool-ratio 1.0 --topic-keywords "" --dedup-threshold 1.0 \
   --max-first-msg-chars 0 --min-user-msg-chars 0 > "$WORK/run.closure" 2>&1
 # 8 codex sessions, 3 claude. Codex skips (no field in the format); of the
@@ -303,7 +303,7 @@ hasnt "claude-nostop was killed"                "$alive" "claude-nostop.jsonl"
 hasnt "truncated-tail was killed, not waved through" "$alive" "claude-truncated-tail.jsonl"
 # With the stage switched off nothing is judged: the codex skip is a property of
 # the stage running, not of the parser.
-python3 "$F" run "$WORK/candidates.tsv" "$WORK/out-noet.tsv" --preset report \
+python3 "$F" run "$WORK/candidates.tsv" "$WORK/out-noet.tsv" \
   --min-turns 0 --max-tool-ratio 1.0 --topic-keywords "" --dedup-threshold 1.0 \
   --no-end-turn --max-first-msg-chars 0 --min-user-msg-chars 0 > "$WORK/run.noet" 2>&1
 chk "L4 switched off skips nothing" "$(cell L4 7 run.noet)" "0"
@@ -312,7 +312,7 @@ chk "L4 switched off kills nothing" "$(cell L4 5 run.noet)" "0"
 # ---------------------------------- D: the table distinguishes skip from pass
 echo
 echo "== D: a skip is not a pass in the printed table =="
-python3 "$F" run "$WORK/candidates.tsv" "$WORK/out-mixed.tsv" --preset report \
+python3 "$F" run "$WORK/candidates.tsv" "$WORK/out-mixed.tsv" \
   --min-turns 0 --max-tool-ratio 1.0 --topic-keywords "" --dedup-threshold 1.0 \
   --max-first-msg-chars 0 --min-user-msg-chars 0 > "$WORK/run.mixed" 2>&1
 chk "kill column holds only the real failures" "$(cell L4 5 run.mixed)" "2"
@@ -343,7 +343,7 @@ with open(os.path.join(w, "candidates-claude.tsv"), "w", encoding="utf-8") as fh
     fh.write(hdr + "\n")
     fh.write(f"claude\t/w/x\t0\t{os.path.getsize(p)}\t0\tfirst\t{p}\n")
 PY
-python3 "$F" run "$WORK/candidates-claude.tsv" "$WORK/out-c.tsv" --preset report \
+python3 "$F" run "$WORK/candidates-claude.tsv" "$WORK/out-c.tsv" \
   --min-turns 0 --max-tool-ratio 1.0 --topic-keywords "" --dedup-threshold 1.0 \
   --max-first-msg-chars 0 --min-user-msg-chars 0 > "$WORK/run.c" 2>&1
 chk "no injected block means no inject line" \

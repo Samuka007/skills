@@ -32,9 +32,15 @@ groups them as role-play / 翻译 (translation) / 改写 (rewriting) / 生成
 | multimodal | 3 of 10 | **report-only** — counted and reported, never a pass/fail |
 | translation | 2 of 10 | normal |
 
-A theme carries a keyword list and threshold overrides; the direction pack
-carries the theme set and the shared defaults. The reference bundle's own
-delivered counts are above so a partner can see what a healthy batch looks like.
+A theme file carries the theme's identity — the keyword list, the label, the
+provenance — plus an optional `override` that replaces keys of the shared
+policy where the theme needs it. The shared standard itself is one global
+policy file in the base skill (`scripts/policy.json`); themes restate none of
+it. The direction carries the theme set and the overrides that define the
+purchase — for the noncode direction, the root `override`'s `exclude_keywords`
+coding-signal list, which is what "non-code" means here. The reference
+bundle's own delivered counts are above so a partner can see what a healthy
+batch looks like.
 
 ## 3. The screening layers
 
@@ -84,7 +90,7 @@ Two measurements that shaped the table:
 ## 4. Signature: measured, gated, and recorded
 
 The gate follows the reference standard: a session whose signature ratio falls
-below the pack's `sig_ratio_min` (0.30, from the reference) does not qualify.
+below the policy's `sig_ratio_min` (0.30, from the reference) does not qualify.
 The ratio is measurable only where thinking blocks exist, so the layer applies
 as follows.
 
@@ -176,7 +182,9 @@ The manifest is a mapping, kept simple:
   "themes": ["role-play", "translation", "…"],
   "mode": "yolo" | "interactive",
   "reviewed": true | false,
-  "counts": { "scanned": 0, "kept": 0, "per_theme": { "role-play": 0 } },
+  "scanned": 0,
+  "entries": [ { "theme": "role-play", "override": { … }, "count": 0 } ],
+  "policy": { "file": "…/scripts/policy.json", "sha256": "…" },
   "layers": [ { "name": "L1 turns", "in": 0, "out": 0, "killed": 0, "reason": "…" } ],
   "items": [
     {
@@ -194,6 +202,14 @@ The manifest is a mapping, kept simple:
   ]
 }
 ```
+
+The direction fields merge into every entry of the delivered manifest, so one
+entry carries the whole run's provenance. `entries` holds one record per theme
+in the direction — its name, the override that applied to it, and how many
+sessions it qualified; a report-only theme carries `"count": null` (counted,
+never selected). `policy` names the global policy file and pins its sha256, so
+a batch can be re-judged against the exact quality standard it was bought
+under.
 
 The serving provider is **not** recorded, despite being available (`codex`
 writes `session_meta.payload.model_provider`, seen locally as `OpenAI` and
@@ -249,9 +265,9 @@ Two properties the acceptance depends on, both asserted by
 `test/signature-e2e.sh` rather than left incidental:
 
 - **Every stage keeps a row in the funnel table, whether or not it ran.** A
-  stage the pack did not enable prints `OFF` where its kill count would sit, and
-  names the pack key it is waiting for — `off (this pack sets no sig_ratio_min)`
-  rather than a bare `off`. Without this, "never ran" and "ran and passed
+  stage whose key no layer supplied prints `OFF` where its kill count would
+  sit, and names the policy key it is waiting for rather than a bare `off`.
+  Without this, "never ran" and "ran and passed
   everything" are the same observation, and the audit above cannot distinguish
   a batch that cleared the signature layer from one where the layer was never
   switched on.

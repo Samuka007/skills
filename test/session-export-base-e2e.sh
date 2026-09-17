@@ -81,11 +81,11 @@ has "the coding session dies at the noncode stage" "$o1" "L7 noncode"
 # unreadable file instead.
 #
 # The invariant is that NO turn row kills anything, so that is what is asserted.
-# The expected row count is derived from the theme files rather than written
-# here, because a hard-coded count would fail the day a theme is added — which
-# would say nothing about the turn floor.
+# The expected row count is derived from the direction's theme entries rather
+# than written here, because a hard-coded count would fail the day a theme is
+# added — which would say nothing about the turn floor.
 selecting="$(jq -r --slurpfile d "$DIRJSON" -n \
-  '$d[0].themes[]' | while read -r t; do
+  '$d[0].themes[] | .theme' | while read -r t; do
      [[ "$(jq -r '.report_only // false' "$SKILL/themes/$t.json")" == "true" ]] || echo "$t"
    done | wc -l | tr -d ' ')"
 chk "the turn stage ran once per selecting theme" "$selecting" \
@@ -133,6 +133,11 @@ chk "the manifest records how it was selected" "funnel-deterministic" \
   "$(jq -r '.[0].selection' "$W/r1/manifest.json")"
 chk "and that no human confirmed the batch (--yolo)" "false" \
   "$(jq -r '.[0].batch_confirmed' "$W/r1/manifest.json")"
+chk "the manifest records the global policy file" "$SKILL/scripts/policy.json" \
+  "$(jq -r '.[0].policy.file' "$W/r1/manifest.json")"
+chk "and the policy digest matches the shipped file" \
+  "$(sha256sum "$SKILL/scripts/policy.json" | cut -d' ' -f1)" \
+  "$(jq -r '.[0].policy.sha256' "$W/r1/manifest.json")"
 
 echo
 echo "== credentials refuse the batch, and only an explicit flag proceeds =="
@@ -159,27 +164,40 @@ rm -f "$S/rollout-leak.jsonl"
 
 echo
 echo "== a direction may name themes and nothing else =="
-# A threshold in a direction file is a second copy of a number the theme
-# already owns, which is the drift the layering exists to prevent.
+# A threshold in a direction file is a second copy of a number the policy
+# layers already own, which is the drift the layering exists to prevent. The
+# same gate rejects the v1 direction shape (a plain-string themes array):
+# silently half-reading an old file would run a bundle its author did not write.
 jq '. + {policy: {min_user_turns: 9}}' "$DIRJSON" > "$W/bad-policy.json"
 o5="$(HOME="$H" bash "$RUNNER" --direction-file "$W/bad-policy.json" -o "$W/x" --yolo 2>&1)"
 chk "a policy key is refused" "2" "$?"
-has "and says where thresholds belong" "$o5" "belong in a theme"
+has "and says where thresholds belong" "$o5" "belong in scripts/policy.json"
 
-jq '.themes = ["translation", "no-such-theme"]' "$DIRJSON" > "$W/bad-theme.json"
+jq '.themes = ["translation", "no-such-theme"]' "$DIRJSON" > "$W/legacy.json"
+o="$(HOME="$H" bash "$RUNNER" --direction-file "$W/legacy.json" -o "$W/l" --yolo 2>&1)"
+chk "a v1 (string) themes array is refused" "2" "$?"
+has "and says why" "$o" "non-object theme entry"
+
+jq '.themes = [{theme: "translation"}, {theme: "no-such-theme"}]' "$DIRJSON" > "$W/bad-theme.json"
 o6="$(HOME="$H" bash "$RUNNER" --direction-file "$W/bad-theme.json" -o "$W/y" --yolo 2>&1)"
 chk "an unknown theme is refused" "2" "$?"
 has "and names the file it looked for" "$o6" "no-such-theme.json"
 
 echo
 echo "== a report-only theme is counted, never selected =="
-# multimodal has an empty keyword list, so its topic stage passes everything.
-# Folding it into the union would select the entire scan under a theme that
-# exists only to report counters.
+# multimodal has an empty keyword list, so its topic stage is OFF. Folding it
+# into the union would select the entire scan under a theme that exists only
+# to report counters.
 chk "multimodal reports n/a rather than a count" "null" \
-  "$(jq -r '.[0].theme_counts.multimodal' "$W/r1/manifest.json")"
+  "$(jq -r '.[0].entries[] | select(.theme == "multimodal") | .count' "$W/r1/manifest.json")"
 chk "and no exported session claims it" "0" \
   "$(jq -r '[.[] | select((.themes // []) | index("multimodal"))] | length' "$W/r1/manifest.json")"
+chk "the manifest records one entry per direction theme" "6" \
+  "$(jq -r '.[0].entries | length' "$W/r1/manifest.json")"
+chk "each entry carries the direction's root override" "6" \
+  "$(jq -r --slurpfile d "$DIRJSON" \
+     '[.[] | select((.override == ($d[0].override // {})))] | length' \
+     <(jq '.[0].entries' "$W/r1/manifest.json"))"
 
 echo
 echo "== the confirmation prompt is a real prompt in a real terminal =="

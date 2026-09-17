@@ -81,3 +81,37 @@ bash test/shipped-install-refs.sh
 The check reads every file under `skills/`, because that whole tree is what
 reaches a partner's machine; it fails on a name with no `skills/<name>/SKILL.md`
 behind it, and on a scan that found no install reference at all.
+
+## The funnel's policy/theme/direction formats replaced (breaking)
+
+The funnel's parameters moved from per-theme `policy` blocks to one global
+policy file, and all three JSON formats changed with it. An installed copy of
+either skill from before this change still runs its old scripts, but it can no
+longer be driven the way its docs said:
+
+- `scripts/policy.json` is new: the shared quality standard, resolved by the
+  engine beside itself and hard-required — an installed base skill without it
+  stops with an error naming the missing path.
+- Theme files carry identity only — `keywords`, `label`, provenance, an
+  optional `override` delta, and multimodal's `report_only` counters. A theme
+  that still carries a `policy` block or a top-level `exclude_keywords` is
+  rejected with the migration named. `themes/coding.json` is new; the old
+  `report` preset is gone with the `--preset` flag and the `presets`
+  subcommand that listed them.
+- A direction file's `themes` entries are `{ "theme": NAME, "override"? }`
+  objects, and the direction's root `override` carries what the purchase
+  constrains — the noncode direction's `exclude_keywords` lives there now. A
+  direction whose `themes` array is a list of plain strings is rejected.
+
+Every affected file ships inside the two skill directories, so the fix is one
+reinstall of the pair:
+
+```bash
+npx skills add Samuka007/skills \
+  --skill session-export-nocode --skill agent-session-batch-export -g -y
+```
+
+A machine that never hand-wrote a direction or theme file needs nothing but
+that reinstall. A hand-written direction file needs the new shape: themes by
+name, thresholds nowhere, and anything the purchase constrains as an
+`override` key naming its delta against the policy.

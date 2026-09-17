@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "kind": "theme",
+  "pack_id": "theme-coding",
+  "pack_version": "1.0.0",
+  "theme": "coding",
+  "label": {
+    "en": "coding",
+    "zh": "编码"
+  },
+  "keywords": [
+    "shellcheck",
+    "stack trace",
+    "traceback",
+    "compile error",
+    "segfault",
+    "git rebase",
+    "git merge",
+    "pull request",
+    "dockerfile",
+    "docker compose",
+    "kubectl",
+    "systemctl",
+    "nixos-rebuild",
+    "npm install",
+    "pip install",
+    "cargo build",
+    "pytest",
+    "unit test",
+    "重构",
+    "报错",
+    "调试",
+    "编译",
+    "部署",
+    "服务器配置",
+    "数据库迁移"
+  ],
+  "override": {
+    "min_user_turns": 3,
+    "max_tool_ratio": 1.0,
+    "require_end_turn": false,
+    "dedup_threshold": 0.8,
+    "min_user_msg_chars": 0,
+    "max_first_msg_chars": 0
+  },
+  "_provenance": {
+    "override": "the engine's validated coding preset (tool-heavy, any length, dedup loose), restated as this theme's delta over the global policy",
+    "min_user_turns": "3 — a coding session carries real back-and-forth; from the same preset",
+    "max_tool_ratio": "1.0 — tool-heavy is the point: no ceiling (the preset's 'tool-heavy')",
+    "require_end_turn": "false — a coding run may legitimately end mid-tool-call (the preset's 'any length')",
+    "dedup_threshold": "0.8 — loose: template re-runs differ only in surface detail (the preset's 'dedup loose')",
+    "min_user_msg_chars / max_first_msg_chars": "0 — any length; the length stage stays open for coding content"
+  }
+}

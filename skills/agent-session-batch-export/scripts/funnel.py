@@ -3,11 +3,23 @@
 
 Mechanism layer of the session-export skill family. The STAGE ORDER and the
 SHAPE of each stage's predicate are fixed here; the PARAMETERS (thresholds,
-keywords) come from one of two data sources: a shipped theme JSON via
-`--policy` (the direction path -- the purchaser can read exactly what was
-bought), or a built-in preset via `--preset` (ad-hoc runs, where no theme
-exists; PRESETS below). The agent never parses session JSONL itself -- it
-reads the funnel table and the enriched candidates TSV this script prints.
+keywords) come from three explicit layers, merged per key with the later
+layer winning:
+  1. scripts/policy.json  the global standard every run starts from. Resolved
+                          next to THIS FILE, so a missing file is a broken
+                          installation and is a hard error -- silently
+                          substituting defaults would run a standard nobody
+                          chose.
+  2. themes/<name>.json   a theme's delta over that standard (`override`),
+                          plus the topic word list that is what the theme IS.
+                          Selected with `--theme NAME`.
+  3. --override-file      one run's explicit delta; the direction driver
+                          composes the direction's root override and the
+                          theme entry's own into this one file.
+Command-line flags sit on top of all three. A layer may also CLEAR a key
+(`null`, or an empty word list), which turns the stage OFF.
+The agent never parses session JSONL itself -- it reads the funnel table and
+the enriched candidates TSV this script prints.
 
 Design rules (do not violate when extending):
   * Python standard library only. No third-party deps. This must run anywhere
@@ -40,11 +52,12 @@ Stages (fixed order):
   L5 length     -- user-message length distribution. Kills scaffolding-noise
                    sessions (first_prompt is huge, real request is tiny).
   L6 topic      -- keyword/regex match over extracted user prose. The only
-                   stage that reads message bodies.
+                   stage that reads message bodies. OFF unless the merged
+                   policy supplies a topic word list.
   L7 noncode    -- coding-signal exclusion. "Mainly not code" is a NEGATIVE
                    property, so it is judged by coding signals being absent
                    rather than by a non-coding keyword being present. Runs only
-                   when the theme supplies exclude_keywords.
+                   when the merged policy supplies exclude_keywords.
   L8 credential -- credential shapes over the COMPLETE raw JSONL, not merely
                    user prose: a key can sit in tool output or an assistant
                    message. It ANNOTATES and never drops a row, because
@@ -58,15 +71,15 @@ Stages (fixed order):
                    (its row still printed) when the policy supplies no
                    threshold, which is what --no-dedup does.
 
-The signature stage is OFF unless the theme sets --sig-ratio-min: thresholds are
-policy and live in the theme file (PACK-SPEC § 4); the mechanism knows only the
-shape.
+Thresholds are policy and live in the policy/theme/override layers, never in
+this file (PACK-SPEC § 4); the mechanism knows only the shape.
 
 Usage:
   python3 funnel.py enrich  CANDIDATES.tsv OUT.tsv      # add computed columns
-  python3 funnel.py run     CANDIDATES.tsv OUT.tsv --preset report [--min-turns 5 ...]
-  python3 funnel.py run     CANDIDATES.tsv OUT.tsv --policy THEME.json
-  python3 funnel.py presets                            # list preset parameter sets
+  python3 funnel.py run     CANDIDATES.tsv OUT.tsv                    # global policy only
+  python3 funnel.py run     CANDIDATES.tsv OUT.tsv --theme translation
+  python3 funnel.py run     CANDIDATES.tsv OUT.tsv --theme translation \
+                            --override-file RUN.json [--min-turns 5 ...]
 
 The 'run' funnel table goes to stdout; OUT.tsv is the surviving candidates
 plus computed columns, shaped for curate-sessions.sh review --ui tsv.
@@ -87,65 +100,12 @@ from pathlib import Path
 from typing import Literal
 
 # ---------------------------------------------------------------------------
-# presets: the default parameter sets an agent picks from. Values here come
-# from the noncoding 10-session demo funnel (2026-07-20) and from this repo's
-# own coding-export experience. Presets are data, not code: tune via flags.
+# Parameter sources are DATA files, never code: scripts/policy.json (the
+# global standard), themes/<name>.json (a topic's delta + word list), and the
+# --override-file a direction driver composes. See the module docstring for
+# the merge order. The former built-in PRESETS dict lived here; every value
+# it carried moved into those files (the coding preset is now themes/coding).
 # ---------------------------------------------------------------------------
-
-PRESETS: dict[str, dict] = {
-    "report": {
-        "desc": "reports / slides / writing / translation: text-heavy, tool-light, multi-turn",
-        "min_turns": 5,
-        "max_tool_ratio": 0.15,
-        "require_end_turn": True,
-        "min_user_msg_chars": 20,
-        "max_first_msg_chars": 4000,
-        "topic_keywords": [
-            "ppt",
-            "报告",
-            "汇报",
-            "总结",
-            "论文",
-            "润色",
-            "翻译",
-            "改写",
-            "撰写",
-            "方案",
-        ],
-        "dedup_threshold": 0.6,
-    },
-    "roleplay": {
-        "desc": "roleplay / creative writing: very text-heavy, long conversations, no tools",
-        "min_turns": 10,
-        "max_tool_ratio": 0.05,
-        "require_end_turn": True,
-        "min_user_msg_chars": 10,
-        "max_first_msg_chars": 20000,
-        "topic_keywords": [
-            "角色",
-            "人设",
-            "剧情",
-            "小说",
-            "世界观",
-            "扮演",
-            "故事",
-            "角色卡",
-            "npc",
-            "ooc",
-        ],
-        "dedup_threshold": 0.6,
-    },
-    "coding": {
-        "desc": "coding sessions: tool-heavy, any length, dedup loose",
-        "min_turns": 3,
-        "max_tool_ratio": 1.0,
-        "require_end_turn": False,
-        "min_user_msg_chars": 0,
-        "max_first_msg_chars": 0,
-        "topic_keywords": [],
-        "dedup_threshold": 0.8,
-    },
-}
 
 
 # ---------------------------------------------------------------------------
@@ -531,9 +491,9 @@ def stage_signature(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, st
     redaction with no signature, so a redacted-only session reports `absent`
     (skipped) rather than `empty` (failed) — the two mean different things.
 
-    The stage only runs when the theme set `sig_ratio_min` (see `Stage.enabled`),
-    so the key is read directly: a threshold is policy and lives in the theme
-    file, and this stage does not invent one.
+    The stage only runs when the merged policy supplies `sig_ratio_min` (see
+    `Stage.enabled`), so the key is read directly: a threshold is policy and
+    lives in the data layers, and this stage does not invent one.
     """
     floor = p["sig_ratio_min"]
     if not v.thinking_blocks:
@@ -591,8 +551,6 @@ def stage_length(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
 
 def stage_topic(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
     kws = p.get("topic_keywords") or []
-    if not kws:
-        return "pass", ""
     # read the cheapest prose surface first: first 3 user messages, truncated.
     hay = norm(" ".join(t[:500] for t in v.user_texts[:3]))
     for kw in kws:
@@ -619,10 +577,15 @@ def stage_noncode(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]
     Reads the same cheap prose surface as the topic stage, not the raw file: an
     exclusion word inside a tool result is the agent's own output, not the
     user's request, and would reject a session for what the assistant did.
+
+    No empty-list branch lives here on purpose: an empty word list is not a
+    threshold of zero, and a pass-all branch would silently wave every session
+    through if the merge layer ever failed to canonicalize. The merge layer
+    DROPS empty lists (see `_canonicalize_lists`), so by the time a stage runs
+    a supplied list is non-empty and an absent one means the stage is OFF —
+    loud, visible, and impossible to confuse with a pass.
     """
     ex = p.get("exclude_keywords") or []
-    if not ex:
-        return "pass", ""
     hay = norm(" ".join(t[:500] for t in v.user_texts[:3]))
     for kw in ex:
         if norm(kw) in hay:
@@ -691,13 +654,13 @@ def stage_dedup(
 
 @dataclass(frozen=True)
 class Stage:
-    """One stage: its label, its predicate, and the theme key it needs.
+    """One stage: its label, its predicate, and the policy key it needs.
 
-    `requires` names the theme parameter without which the stage has no
+    `requires` names the policy parameter without which the stage has no
     threshold to apply, so it cannot run. Stages are the mechanism; which of
-    them a theme turns on, and at what threshold, is policy and lives in the
-    theme file (DESIGN.md: "a new threshold is a theme-file edit and touches no
-    code"). A stage with `requires = None` always runs.
+    them a run turns on, and at what threshold, is policy and lives in the
+    policy/theme/override layers (DESIGN.md: "a new threshold is a data-file
+    edit and touches no code"). A stage with `requires = None` always runs.
 
     A gated-off stage KEEPS ITS ROW and prints OFF where its kill count would
     sit. Dropping the row would make "this layer never ran" and "this layer ran
@@ -711,20 +674,30 @@ class Stage:
 
     def enabled(self, p: dict) -> bool:
         # `is not None`, not a truthiness test: --sig-ratio-min 0 is a deliberate
-        # floor of zero, not an unset flag.
+        # floor of zero, not an unset flag. Absence is produced uniformly by
+        # the merge chain — `null` in an override clears a key, and empty word
+        # lists are dropped there too (see `_canonicalize_lists`). The choice
+        # was canonicalize-at-merge rather than teach every stage to also test
+        # for emptiness: this predicate stays the single OFF rule, and the OFF
+        # row's printed reason ("this pack sets no X") stays truthful.
         return self.requires is None or p.get(self.requires) is not None
 
 
 STAGES: list[Stage] = [
     Stage("L1 turns", stage_turns),
     Stage("L2 tool_ratio", stage_tool_ratio),
-    # Needs the threshold, so it is off until the theme supplies one.
+    # Needs the threshold, so it is off until the merged policy supplies one
+    # (the global policy sets one; --no-signature or a `null` override clears
+    # it).
     Stage("L3 signature", stage_signature, requires="sig_ratio_min"),
     Stage("L4 end_turn", stage_end_turn),
     Stage("L5 length", stage_length),
-    Stage("L6 topic", stage_topic),
-    # Off until a theme supplies the word list: an empty exclusion set would
-    # otherwise read as "no coding signal found" on every session.
+    # Off until a word list is supplied: with no list the stage never ran, and
+    # a pass-all reading of that state is the confusion the OFF row prevents.
+    Stage("L6 topic", stage_topic, requires="topic_keywords"),
+    # Off until the direction/policy layers supply the exclusion word list: an
+    # empty exclusion set would otherwise read as "no coding signal found" on
+    # every session.
     Stage("L7 noncode", stage_noncode, requires="exclude_keywords"),
     # Always on. It never kills, so it costs no session; what it produces is the
     # disclosure the hard gate and the manifest both read.
@@ -768,9 +741,10 @@ def fmt_int(n: int) -> str:
     return f"{n:,}"
 
 
-# Theme-file key -> the stage parameter it feeds. A theme states buy-side names;
-# the stages have their own. Mapping them here in one table is what lets a theme
-# file be the single source of a threshold without the stages renaming anything.
+# Policy-file key -> the stage parameter it feeds. The policy layers state
+# buy-side names; the stages have their own. Mapping them here in one table is
+# what lets a data file be the single source of a threshold without the stages
+# renaming anything.
 POLICY_KEYS: dict[str, str] = {
     "min_user_turns": "min_turns",
     "max_tool_ratio": "max_tool_ratio",
@@ -787,8 +761,33 @@ POLICY_KEYS: dict[str, str] = {
 POLICY_UNENFORCED: frozenset[str] = frozenset({"min_assistant_turns", "topic_match"})
 
 
-def load_policy(path: Path) -> dict:
-    """Read a theme file into stage parameters.
+VALID_OVERRIDE_KEYS: frozenset[str] = (
+    frozenset(POLICY_KEYS) | POLICY_UNENFORCED | {"exclude_keywords"}
+)
+
+# Keys a `null` may clear: exactly those whose stage HAS an off state (L3, L9,
+# L6, L7). The always-on stages (L1/L2/L4/L5) have no OFF row to print, so a
+# cleared key there would be a KeyError at best and a silently unjudged stage
+# at worst — refused here, loudly, instead.
+CLEARABLE_KEYS: frozenset[str] = frozenset(
+    {"sig_ratio_min", "dedup_threshold", "topic_keywords", "exclude_keywords"}
+)
+
+def _load_json_object(path: Path, what: str) -> dict:
+    """Read `path` as a JSON object or die naming the file and the layer."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        sys.exit(f"cannot read {what} {path}: {e}")
+    except json.JSONDecodeError as e:
+        sys.exit(f"{what} {path} is not valid JSON: {e}")
+    if not isinstance(doc, dict):
+        sys.exit(f"{what} {path} must contain a JSON object")
+    return doc
+
+
+def _mapped_params(path: Path, pol: dict) -> dict:
+    """Translate one `policy` object into stage parameters.
 
     Three classes of key, three behaviours:
       * mapped (POLICY_KEYS) -> becomes a stage threshold;
@@ -797,27 +796,15 @@ def load_policy(path: Path) -> dict:
         run the funnel at a value nobody chose, which is the failure the whole
         single-source-of-truth layering exists to prevent.
     """
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as e:
-        sys.exit(f"cannot read policy file {path}: {e}")
-    except json.JSONDecodeError as e:
-        sys.exit(f"policy file {path} is not valid JSON: {e}")
-    if not isinstance(doc, dict):
-        sys.exit(f"policy file {path} must contain a JSON object")
-
-    pol = doc.get("policy")
-    if not isinstance(pol, dict):
-        sys.exit(f"policy file {path} has no `policy` object")
-
-    out: dict = {}
-    unknown = sorted(set(pol) - set(POLICY_KEYS) - POLICY_UNENFORCED)
+    unknown = sorted(set(pol) - VALID_OVERRIDE_KEYS)
     if unknown:
         sys.exit(
             f"policy file {path} carries keys no stage maps: {', '.join(unknown)} "
-            "— fix the theme file or teach the funnel; a restated or mistyped "
+            "— fix the file or teach the funnel; a restated or mistyped "
             "threshold must never pass silently"
         )
+
+    out: dict = {}
     for k, dest in POLICY_KEYS.items():
         if k in pol:
             out[dest] = pol[k]
@@ -828,18 +815,141 @@ def load_policy(path: Path) -> dict:
             "consumes — NOT enforced by this engine state",
             file=sys.stderr,
         )
+    return out
 
-    # Word lists live at the top level of a theme, not inside `policy`: they are
-    # what the theme IS, while `policy` is how strictly it is applied.
+
+def _override_layer(path: Path, layer: dict) -> dict:
+    """Translate one override delta (theme.override or --override-file) into
+    stage parameters.
+
+    Same three key classes as `_mapped_params`, plus `exclude_keywords`: the
+    exclusion word list is policy too (it is what turns L7 on), it just is a
+    list rather than a threshold. A value of `null` CLEARS the key — the stage
+    prints OFF — which is how a run turns a layer's setting off without
+    restating every other value. A list replaces wholesale, never appends.
+    Clearing is only meaningful where an OFF state exists; see CLEARABLE_KEYS.
+    """
+    unknown = sorted(set(layer) - VALID_OVERRIDE_KEYS)
+    if unknown:
+        sys.exit(
+            f"{path} carries override keys no stage maps: {', '.join(unknown)} "
+            "— legal keys are "
+            f"{', '.join(sorted(VALID_OVERRIDE_KEYS))}; a restated or mistyped "
+            "threshold must never pass silently"
+        )
+    out: dict = {}
+    for k, v in layer.items():
+        if v is None:
+            dest = "topic_keywords" if k == "topic_keywords" else (
+                "exclude_keywords" if k == "exclude_keywords" else POLICY_KEYS.get(k)
+            )
+            if dest not in CLEARABLE_KEYS:
+                sys.exit(
+                    f"{path}: `null` cannot clear {k}: that stage has no off "
+                    "state, so a cleared key could not be judged or reported — "
+                    "set an explicit value instead"
+                )
+            out[dest] = None
+            continue
+        if k == "exclude_keywords":
+            out[k] = v
+        elif k in POLICY_KEYS:
+            out[POLICY_KEYS[k]] = v
+        else:  # known-unenforced: reported, never applied — same as the baseline
+            print(
+                f"note: {path} sets {k}, which no funnel stage consumes — "
+                "NOT enforced by this engine state",
+                file=sys.stderr,
+            )
+    return out
+
+
+def _canonicalize_lists(p: dict) -> dict:
+    """Drop empty word lists so "supplied but empty" reads as "not supplied".
+
+    An empty topic/exclusion list is not a threshold of zero: with it present,
+    L6/L7 would either pass everything (a stage that never ran, reading as one
+    that did) or fail everything (matching nothing is not a judgement). Both
+    print differently from OFF, and OFF is the only honest rendering of "no
+    words to match". Dropped here — ONCE, after the whole merge chain — so
+    `Stage.enabled` stays the single `is not None` rule and every layer (theme
+    override, override file, flags) gets the same empty-means-clear semantics
+    for free. `--exclude-keywords ""` and `{"exclude_keywords": []}` are
+    therefore both an explicit "turn this layer off".
+    """
+    for key in ("topic_keywords", "exclude_keywords"):
+        if key in p and not p[key]:
+            del p[key]
+    return p
+
+
+def load_global_policy() -> tuple[dict, str]:
+    """Layer 1: the global standard, resolved next to THIS FILE.
+
+    Engine-relative on purpose: the policy travels with the script it governs,
+    so a copy installed anywhere carries its own standard and no CWD or
+    environment variable can silently substitute another. A missing file is a
+    broken installation and a hard error — guessing defaults here would run a
+    standard nobody chose.
+    """
+    path = Path(__file__).resolve().parent / "policy.json"
+    if not path.is_file():
+        sys.exit(
+            f"the global policy file is missing: {path}\n"
+            "  the funnel resolves it next to this script; reinstall the skill\n"
+            "  or restore the file — there is no built-in fallback"
+        )
+    doc = _load_json_object(path, "policy file")
+    pol = doc.get("policy")
+    if not isinstance(pol, dict):
+        sys.exit(f"policy file {path} has no `policy` object")
+    return _mapped_params(path, pol), str(doc.get("name", path.stem))
+
+
+def load_theme(path: Path) -> dict:
+    """Layer 2: one theme's contribution — its word list plus its override.
+
+    `keywords` is what the theme IS (the topic stage's positive list), so it
+    stays a top-level theme key; `override` is how far the theme deviates from
+    the global policy. Legacy theme shapes are rejected loudly rather than
+    half-read: a `policy` block or a top-level `exclude_keywords` means a
+    pre-decoupling file, and silently ignoring either would run the theme
+    without the words or thresholds its author wrote.
+    """
+    doc = _load_json_object(path, "theme file")
+    if "policy" in doc:
+        sys.exit(
+            f"theme file {path} carries a `policy` block: thresholds moved to\n"
+            "  scripts/policy.json and per-theme `override` deltas (SPEC item 25).\n"
+            "  This file predates the split; re-shipping it is the only fix."
+        )
+    if "exclude_keywords" in doc:
+        sys.exit(
+            f"theme file {path} carries top-level `exclude_keywords`: the coding\n"
+            "  exclusion list moved to the direction layer (SPEC item 25), which\n"
+            "  passes it to every run via --override-file. This file predates the\n"
+            "  split; re-shipping it is the only fix."
+        )
+    out: dict = {}
     kws = doc.get("keywords")
     if isinstance(kws, list):
         out["topic_keywords"] = [str(k) for k in kws]
-    ex = doc.get("exclude_keywords")
-    if isinstance(ex, list) and ex:
-        out["exclude_keywords"] = [str(k) for k in ex]
-    out["_preset"] = f"theme:{doc.get('theme', path.stem)}"
+    override = doc.get("override", {})
+    if not isinstance(override, dict):
+        sys.exit(f"theme file {path} has a non-object `override`")
+    out.update(_override_layer(path, override))
     return out
 
+
+def load_override_file(path: Path) -> dict:
+    """Layer 3: one run's explicit delta, as a flat JSON object of policy keys.
+
+    The direction driver composes the direction's root override with the theme
+    entry's own into this one file (entry wins), so the funnel sees a single
+    object and stays ignorant of direction structure.
+    """
+    doc = _load_json_object(path, "override file")
+    return _override_layer(path, doc)
 
 @dataclass
 class StageRow:
@@ -946,7 +1056,13 @@ def run_funnel(
     # print funnel table: the agent's decision surface
     width = 100
     print("=" * width)
-    print(f"preset: {p.get('_preset', 'custom')}   surviving {len(alive)} / {total_in}")
+    # One line, three provenance fields: which standard ran, under which
+    # theme, and the headline count. A reader copying the table into an issue
+    # must not have to guess where the numbers came from.
+    print(
+        f"policy: {p.get('_policy', 'standard')}   "
+        f"theme: {p.get('_theme', 'none')}   surviving {len(alive)} / {total_in}"
+    )
     print("=" * width)
     prev = total_in
     # Column where a reason starts; continuation lines hang under it.
@@ -1030,7 +1146,9 @@ def main() -> int:
     # it at all.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
+            # ty's stubs type the mixed stdout/stderr union as `object`; the
+            # method exists at runtime on TextIOWrapper (guarded above).
+            stream.reconfigure(encoding="utf-8", errors="replace")  # ty: ignore[call-non-callable]
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -1046,13 +1164,35 @@ def main() -> int:
     pr = sub.add_parser("run", help="execute the funnel and write surviving candidates")
     pr.add_argument("candidates")
     pr.add_argument("out")
-    pr.add_argument("--preset", default="report", choices=sorted(PRESETS))
+    pr.add_argument(
+        "--theme",
+        help="name of a shipped theme in themes/<name>.json: its word list "
+        "becomes the topic stage's positive list and its `override` deltas "
+        "the run's thresholds. The global policy is always the base layer",
+    )
+    pr.add_argument(
+        "--override-file",
+        help="a flat JSON object of policy keys applied over the theme (if "
+        "any): the direction driver composes the direction's root override "
+        "and the theme entry's own into this one file. `null` clears a key "
+        "(the stage prints OFF); lists replace, never append",
+    )
     pr.add_argument("--min-turns", type=int)
     pr.add_argument("--max-tool-ratio", type=float)
     pr.add_argument("--no-end-turn", action="store_true")
     pr.add_argument("--min-user-msg-chars", type=int)
     pr.add_argument("--max-first-msg-chars", type=int)
-    pr.add_argument("--topic-keywords", help="comma-separated; overrides preset")
+    pr.add_argument(
+        "--topic-keywords",
+        help="comma-separated topic word list, replacing whatever the theme "
+        "supplied; an empty value clears the list and L6 prints OFF",
+    )
+    pr.add_argument(
+        "--exclude-keywords",
+        help="comma-separated coding-signal exclusion list for L7, replacing "
+        "whatever the layers below supplied; an empty value clears the list "
+        "and L7 prints OFF",
+    )
     pr.add_argument("--dedup-threshold", type=float)
     pr.add_argument(
         "--no-dedup",
@@ -1064,10 +1204,17 @@ def main() -> int:
     pr.add_argument(
         "--sig-ratio-min",
         type=float,
-        help="thinking-signature ratio floor (PACK-SPEC § 4). No preset sets "
-        "one: the layer is OFF unless the theme asks for it, so existing "
-        "presets behave exactly as before. Sessions with no thinking block "
-        "are skipped, not failed — codex has no signature field",
+        help="thinking-signature ratio floor (PACK-SPEC § 4), restated for "
+        "one run over whatever the policy layers set. Sessions with no "
+        "thinking block are skipped, not failed — codex has no signature "
+        "field",
+    )
+    pr.add_argument(
+        "--no-signature",
+        action="store_true",
+        help="turn the signature layer off: the policy's floor is cleared, "
+        "so L3 prints OFF and kills nothing. This is NOT --sig-ratio-min 0, "
+        "which would fail every unsigned thinking block",
     )
     pr.add_argument(
         "--in-place",
@@ -1076,14 +1223,6 @@ def main() -> int:
         "screen.tsv scaffold next to it (the integration "
         "contract with pick-sessions --review-only); CANDIDATES "
         "is archived as candidates.full.tsv",
-    )
-    pr.add_argument(
-        "--policy",
-        help="a theme JSON file: its `policy` object supplies every threshold "
-        "and its `keywords`/`exclude_keywords` supply the word lists. This is "
-        "the direction path's input — thresholds are policy and live in the "
-        "theme file, so nothing downstream restates a number. Explicit flags "
-        "still win over the file, which is what lets a test pin one value",
     )
     pr.add_argument(
         "--credential-hard-gate",
@@ -1096,24 +1235,7 @@ def main() -> int:
         "stopped by this",
     )
 
-    sub.add_parser("presets", help="list preset parameter sets")
-
     args = ap.parse_args()
-
-    if args.cmd == "presets":
-        for name, cfg in PRESETS.items():
-            print(f"{name}: {cfg['desc']}")
-            for k in (
-                "min_turns",
-                "max_tool_ratio",
-                "require_end_turn",
-                "topic_keywords",
-                "dedup_threshold",
-            ):
-                print(f"  {k}: {cfg[k]}")
-            print()
-        return 0
-
     header, rows = read_candidates(Path(args.candidates))
 
     if args.cmd == "enrich":
@@ -1176,15 +1298,26 @@ def main() -> int:
         return 0
 
     # run
-    # A theme file replaces the preset as the base: the direction path's
-    # thresholds live in the theme, and a preset silently underneath it would be
-    # a second source for the same number. Explicit flags still win over both,
-    # which is what lets a test pin one value without editing a shipped theme.
-    if args.policy:
-        p = load_policy(Path(args.policy))
-    else:
-        p = dict(PRESETS[args.preset])
-        p["_preset"] = args.preset
+    # Four layers, merged per key, later wins: global policy -> theme override
+    # -> override file -> flags. Each layer only restates what it owns, so no
+    # number has two sources; a layer may also CLEAR a key (`null`, an empty
+    # word list, or a --no-* flag), which is the OFF state every stage reads.
+    # Provenance tags ride along so the table's header can name what ran.
+    p, policy_name = load_global_policy()
+    p["_policy"] = policy_name
+    if args.theme:
+        theme_path = Path(__file__).resolve().parent.parent / "themes" / f"{args.theme}.json"
+        if not theme_path.is_file():
+            themes_dir = theme_path.parent
+            available = ", ".join(sorted(q.stem for q in themes_dir.glob("*.json")))
+            sys.exit(
+                f"no such theme: {args.theme} (looked for {theme_path})\n"
+                f"  available themes: {available or '(none)'}"
+            )
+        p.update(load_theme(theme_path))
+        p["_theme"] = args.theme
+    if args.override_file:
+        p.update(load_override_file(Path(args.override_file)))
     if args.min_turns is not None:
         p["min_turns"] = args.min_turns
     if args.max_tool_ratio is not None:
@@ -1197,6 +1330,10 @@ def main() -> int:
         p["max_first_msg_chars"] = args.max_first_msg_chars
     if args.topic_keywords is not None:
         p["topic_keywords"] = [k for k in args.topic_keywords.split(",") if k]
+    if args.exclude_keywords is not None:
+        # Same comma semantics as --topic-keywords: an empty value is an empty
+        # list, which _canonicalize_lists turns into the OFF state below.
+        p["exclude_keywords"] = [k for k in args.exclude_keywords.split(",") if k]
     if args.dedup_threshold is not None:
         p["dedup_threshold"] = args.dedup_threshold
     if args.no_dedup:
@@ -1207,8 +1344,14 @@ def main() -> int:
         # supplied no value" state, which both `Stage.enabled` and
         # `stage_dedup` read as OFF, and which the L9 row prints as such.
         p["dedup_threshold"] = None
+    if args.no_signature:
+        # Same shape as --no-dedup: clears the key rather than stating a zero
+        # floor, because 0.0 would fail every unsigned thinking block — the
+        # opposite of what this flag promises.
+        p["sig_ratio_min"] = None
     if args.sig_ratio_min is not None:
         p["sig_ratio_min"] = args.sig_ratio_min
+    p = _canonicalize_lists(p)
 
     alive, _killed, views = run_funnel(rows, p)
 

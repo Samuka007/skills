@@ -27,12 +27,18 @@ fi                                                                              
 # the funnel table to abort on a catastrophic run, and may not edit its output.
 #
 # Layering (one source of truth each):
-#   themes/<name>.json          every threshold and word list  (policy)
-#   scripts/funnel.py           every screening stage           (mechanism)
-#   scripts/curate-sessions.sh  copy, manifest, verify, archive (pipeline)
-# The direction file adds only a theme list. This script restates no threshold;
-# if you find a number here that a theme already carries, that is the drift the
-# layering exists to prevent.
+#   scripts/policy.json         the global quality standard       (policy)
+#   themes/<name>.json          a theme's word list + override    (calibration)
+#   direction.json              theme combination + word-list     (the bundle)
+#                               override shared by its themes
+#   scripts/funnel.py           every screening stage             (mechanism)
+#   scripts/curate-sessions.sh  copy, manifest, verify, archive   (pipeline)
+# The direction file names themes and may carry one override block (today: the
+# coding-signal exclusion list its themes share); per-theme entries may add
+# their own. Per theme, this script composes root ∪ entry override into one
+# file and hands the funnel `--theme NAME --override-file FILE`. This script
+# restates no threshold; if you find a number here that a policy layer already
+# carries, that is the drift the layering exists to prevent.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,7 +52,9 @@ usage() {
 Usage: export-direction.sh --direction-file FILE --out DIR [options]
 
 Required
-      --direction-file FILE   a direction JSON: metadata + a `themes` array
+      --direction-file FILE   a direction JSON: metadata, an optional root
+                              `override`, and a `themes` array of
+                              {"theme": NAME, "override": {...}} entries
   -o, --out DIR               working directory for this run
 
 Options
@@ -72,26 +80,26 @@ Two length controls, and they are not the same thing
   candidate.
 
   Whether a session's MESSAGES are long enough is separate policy, not a flag:
-  each theme carries a per-message character floor under the key
-  `policy.min_user_msg_chars`, applied by the funnel's L5 length stage. No
-  option of this script reaches it. When L5 kills, this run prints that theme
-  key; the value itself stays in the theme file, which is the only place it
-  can be changed.
+  the global policy (scripts/policy.json) carries the per-message character
+  floor `min_user_msg_chars`, applied by the funnel's L5 length stage; a
+  direction override or a theme may restate it for a run. No option of this
+  script reaches it. When L5 kills, this run prints the key; the value itself
+  stays in the policy layers, which is the only place it can be changed.
 USAGE
 }
 
 die() { printf 'export-direction: %s\n' "$1" >&2; exit "${2:-1}"; }
 
 # The one funnel stage a caller can mistake for `--min-lines`: both are called
-# "length", and only one of them is a flag. Its thresholds are theme policy no
+# "length", and only one of them is a flag. Its thresholds are policy no
 # option of this script reaches, so a caller told to stop dropping short
 # sessions sets `--min-lines 0`, watches L5 kill on `min_user_msg_chars`
 # anyway, and has no way to tell the two controls apart: the funnel table
 # reports the comparison faithfully, but a comparison is not a place a caller
-# can act. What this adds is the one thing the table cannot say — which theme
+# can act. What this adds is the one thing the table cannot say — which policy
 # key produced the kill — and never its value, because the value is policy and
-# lives in the theme file this run does not own.
-l5_note() { # $1 funnel table file, $2 theme name, $3 theme file
+# lives in the policy layers this run does not own.
+l5_note() { # $1 funnel table file, $2 theme name, $3 policy file
   local table="$1" theme="$2" path="$3" killed block
   killed="$(awk '/^L[0-9]/ { l5 = ($1 == "L5") }
                 l5 { for (i = 1; i < NF; i++)
@@ -102,18 +110,20 @@ l5_note() { # $1 funnel table file, $2 theme name, $3 theme file
   # reason can push its second class onto the next line.
   block="$(awk '/^L[0-9]/ { l5 = ($1 == "L5") } l5' "$table")"
   if [[ "$block" == *"longest later user msg"* ]]; then
-    printf 'note: theme %s killed %s session(s) at L5 length on the theme key\n' "$theme" "$killed"
+    printf 'note: theme %s killed %s session(s) at L5 length on the policy key\n' "$theme" "$killed"
     printf '      `min_user_msg_chars` — a per-MESSAGE character floor, in\n'
     printf '      %s\n' "$path"
+    printf '      (a direction override or a theme may restate it for one run;\n'
+    printf '      the policy file is where the default lives.)\n'
     printf '      `--min-lines` floors the line count of a session FILE and cannot\n'
     printf '      reach this stage, so no value of it revives these rows; the key\n'
     printf '      above is the one to change.\n'
   fi
   if [[ "$block" == *"first user msg"* && "$block" == *"> cap"* ]]; then
-    printf 'note: theme %s killed %s session(s) at L5 length on the theme key\n' "$theme" "$killed"
+    printf 'note: theme %s killed %s session(s) at L5 length on the policy key\n' "$theme" "$killed"
     printf '      `max_first_msg_chars` — the first-message cap, in\n'
     printf '      %s\n' "$path"
-    printf '      Also unreachable from this command line; only the theme changes it.\n'
+    printf '      Also unreachable from this command line; only the policy layers change it.\n'
   fi
 }
 
@@ -263,18 +273,51 @@ jqr() { "$JQ" "$@" | tr -d '\r'; }
 # ------------------------------------------------------------------ direction
 DIR_NAME="$(jqr -r '.direction // empty' "$DIRECTION_FILE")"
 DIR_SKILL="$(jqr -r '.skill // empty' "$DIRECTION_FILE")"
-THEME_NAMES="$(jqr -r '.themes // [] | .[]' "$DIRECTION_FILE" | tr '\n' ' ')"
+# Schema gate, evaluated BEFORE any scan or scratch directory exists: a
+# direction names themes and may carry override blocks; anything else is a
+# second copy of a number some policy layer owns, which is the drift the
+# layering exists to prevent. A legacy direction (plain-string themes array,
+# a `policy` block) is rejected here too — silently half-reading an old file
+# would run a bundle its author did not write.
+POLICY_FILE="$SCRIPT_DIR/policy.json"
+[[ -f "$POLICY_FILE" ]] || die "the funnel's global policy file is missing: $POLICY_FILE" 1
+[[ "$(jqr -r 'type' "$DIRECTION_FILE" 2>/dev/null || true)" == "object" ]] \
+  || die "direction file is not a JSON object: $DIRECTION_FILE" 2
+stray="$(jqr -r '
+  (keys_unsorted - ["schema_version", "direction", "skill", "override", "themes", "_provenance"]) as $bad
+  | if ($bad | length) > 0
+    then "top-level keys outside the schema: " + ($bad | join(","))
+    else ([ .themes[]?
+            | select((type != "object")
+                     or ((.theme | type) != "string")
+                     or (has("override") and ((.override | type) != "object")))
+            | if type != "object" then "non-object theme entry"
+              elif (.theme | type) != "string" then "theme entry without a string `theme`"
+              else "theme entry with a non-object `override`" end ][0]
+           // "")
+    end' "$DIRECTION_FILE" 2>/dev/null || true)"
+[[ -z "$stray" ]] || die "direction file is invalid: $stray — policy keys belong in scripts/policy.json or an override block" 2
+# One entry per theme: a repeated name would run the theme twice and make the
+# manifest's per-entry record depend on loop order.
+dup="$(jqr -r '[.themes[].theme] | (length - (unique | length)) as $d | if $d > 0 then "has duplicate theme entries" else "" end' "$DIRECTION_FILE" 2>/dev/null || true)"
+[[ -z "$dup" ]] || die "direction file $dup; each theme may appear once" 2
+
+# Only now that the shape is trusted can the names be read: a legacy
+# plain-string themes array never reaches this line (rejected above as a
+# non-object entry), so a malformed file cannot die here with a misleading
+# "lists no themes".
+THEME_NAMES="$(jqr -r '.themes // [] | .[] | .theme // empty' "$DIRECTION_FILE" | tr '\n' ' ')"
 THEME_NAMES="${THEME_NAMES% }"
 [[ -n "$THEME_NAMES" ]] || die "direction file lists no themes: $DIRECTION_FILE" 2
-
-# A direction names themes; it must not carry thresholds. Catching this here is
-# what keeps a second copy of a number from appearing in a direction bundle.
-stray="$(jqr -r '[paths(scalars) | join(".")] | map(select(test("policy|threshold|keyword|min_|max_|_ratio"))) | .[]' "$DIRECTION_FILE" 2>/dev/null || true)"
-[[ -z "$stray" ]] || die "direction file carries policy keys, which belong in a theme: $(echo "$stray" | tr '\n' ' ')" 2
 
 for t in $THEME_NAMES; do
   [[ -f "$THEMES_DIR/$t.json" ]] || die "direction names theme '$t', but $THEMES_DIR/$t.json does not exist" 2
 done
+
+# The direction's shared override (today: the coding-signal exclusion list its
+# themes all judge with). Entries may add their own deltas on top; the funnel
+# receives root ∪ entry as one flat file, entry winning on conflict.
+ROOT_OVERRIDE="$(jqr -c '.override // {}' "$DIRECTION_FILE")"
 
 echo "direction: ${DIR_NAME:-<unnamed>}${DIR_SKILL:+  (skill: $DIR_SKILL)}"
 echo "themes:    $THEME_NAMES"
@@ -298,10 +341,11 @@ CAND="$TMP/candidates.tsv"
 scanned="$(($(wc -l < "$CAND") - 1))"
 
 # --------------------------------------------------- 2. per-theme funnel runs
-# One funnel run per theme, each reading that theme's file for every threshold.
-# A report-only theme is COUNTED and never contributes to the union: its keyword
-# list is empty, so its topic stage passes everything, and folding it in would
-# select the entire scan under a theme that exists only to report counters.
+# One funnel run per theme, under the composed override (direction root ∪
+# theme entry) over the funnel's global policy. A report-only theme is COUNTED
+# and never contributes to the union: its keyword list is empty, so its topic
+# stage is OFF (no list to match), and folding it in would select the entire
+# scan under a theme that exists only to report counters.
 mkdir -p "$TMP/.direction"
 counts="$TMP/.direction/counts.tsv"
 thememap="$TMP/.direction/thememap.tsv"
@@ -311,9 +355,16 @@ thememap="$TMP/.direction/thememap.tsv"
 for t in $THEME_NAMES; do
   tf="$THEMES_DIR/$t.json"
   ro="$(jqr -r '.report_only // false' "$tf")"
+  # This theme entry's own delta over the direction's shared override; the
+  # composed object is what the funnel is told the run's terms are, and what
+  # the manifest records — one file, one source, no restatement here.
+  entry_override="$(jqr -rc --arg t "$t" '(.themes // [])[] | select(.theme == $t) | .override // {}' "$DIRECTION_FILE")"
+  merged_override="$(jqr -nc --argjson a "$ROOT_OVERRIDE" --argjson b "$entry_override" '$a * $b')"
+  ovf="$TMP/.direction/$t.override.json"
+  printf '%s' "$merged_override" > "$ovf"
   if [[ "$ro" == "true" ]]; then
     echo "== theme: $t (report-only — counted, never selected) =="
-    printf '%s\t%s\t%s\n' "$t" "n/a" "1" >> "$counts"
+    printf '%s\t%s\t%s\t%s\n' "$t" "n/a" "1" "$merged_override" >> "$counts"
     continue
   fi
   echo "== theme: $t =="
@@ -322,11 +373,11 @@ for t in $THEME_NAMES; do
   # kill below it; the copy lives outside `.direction/`, which is copied into
   # the delivered run directory, so the corpus gains no new artifact.
   ftab="$TMP/funnel-$t.txt"
-  "${PY_CMD[@]}" "$FUNNEL" run "$CAND" "$surv" --policy "$tf" | tee "$ftab" \
+  "${PY_CMD[@]}" "$FUNNEL" run "$CAND" "$surv" --theme "$t" --override-file "$ovf" | tee "$ftab" \
     || die "the funnel failed on theme $t"
-  l5_note "$ftab" "$t" "$tf"
+  l5_note "$ftab" "$t" "$POLICY_FILE"
   n="$(($(wc -l < "$surv") - 1))"
-  printf '%s\t%s\t%s\n' "$t" "$n" "0" >> "$counts"
+  printf '%s\t%s\t%s\t%s\n' "$t" "$n" "0" "$merged_override" >> "$counts"
   awk -v t="$t" -F'\t' 'NR > 1 && $NF != "" { print $NF "\t" t }' "$surv" >> "$thememap"
 done
 
@@ -369,7 +420,7 @@ fi
 # ------------------------------------------------------- 4. pre-export report
 echo
 echo "this direction qualifies $qualified session(s) from $scanned scanned:"
-while IFS="$(printf '\t')" read -r t n ro; do
+while IFS="$(printf '\t')" read -r t n ro _ov; do
   if [[ "$ro" == "1" ]]; then
     printf '  %-16s n/a  (report-only)\n' "$t"
   else
@@ -472,15 +523,28 @@ kept="$(jqr 'length' "$MANIFEST")"
 [[ "$kept" -gt 0 ]] || die "finalize kept nothing despite $qualified qualifying sessions"
 
 # ------------------------------------------- 9. direction fields per entry
-theme_counts="$(jqr -n '{}')"
-while IFS="$(printf '\t')" read -r t n ro; do
+# Per-theme record of what actually ran: the theme, the composed override it
+# was judged under, and its count (null for report-only themes, which are
+# counted but never selected). The global policy file + digest ride along so
+# a recipient can re-run the exact standard the batch was bought under.
+entries_json="$(jqr -n '[]')"
+while IFS="$(printf '\t')" read -r t n ro ov; do
   if [[ "$ro" == "1" ]]; then v=null; else v="$n"; fi
-  theme_counts="$(jqr -nc --argjson a "$theme_counts" --arg k "$t" --argjson v "$v" '$a + {($k): $v}')"
+  entries_json="$(jqr -nc --argjson a "$entries_json" --arg k "$t" --argjson v "$v" --argjson o "$ov" '$a + [{theme: $k, override: $o, count: $v}]')"
 done < "$counts"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  POLICY_SHA="$(sha256sum "$POLICY_FILE" | cut -d' ' -f1)"
+elif command -v shasum >/dev/null 2>&1; then
+  POLICY_SHA="$(shasum -a 256 "$POLICY_FILE" | cut -d' ' -f1)"
+else
+  die "no sha256 tool on PATH (looked for sha256sum, shasum): the manifest must record the policy digest" 1
+fi
 
 dir_obj="$(jqr -nc \
   --arg dir "$DIR_NAME" --arg skill "$DIR_SKILL" \
-  --argjson tc "$theme_counts" \
+  --argjson entries "$entries_json" \
+  --arg pfile "$POLICY_FILE" --arg psha "$POLICY_SHA" \
   --argjson allow "$ALLOW_CRED" --argjson hits "$cred_hits" \
   --argjson conf "$([[ "$YOLO" -eq 1 ]] && echo 0 || echo 1)" \
   --argjson scanned "$scanned" \
@@ -489,7 +553,8 @@ dir_obj="$(jqr -nc \
     selection: "funnel-deterministic",
     batch_confirmed: ($conf == 1),
     scanned: $scanned,
-    theme_counts: $tc,
+    entries: $entries,
+    policy: {file: $pfile, sha256: $psha},
     allow_credentials: ($allow == 1),
     credential_hits: $hits}')"
 

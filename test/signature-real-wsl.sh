@@ -25,7 +25,7 @@ awk -F'\t' 'NR==1{for(i=1;i<=NF;i++)h[$i]=i; next}
 echo
 echo "== funnel with the signature gate ON (0.30), everything else permissive =="
 python3 "$F" run "$W/candidates.tsv" "$W/out.tsv" \
-  --preset report --sig-ratio-min 0.30 --min-turns 1 --no-end-turn \
+  --sig-ratio-min 0.30 --min-turns 1 --no-end-turn \
   --max-tool-ratio 100 --no-dedup --min-user-msg-chars 1 --max-first-msg-chars 1000000 \
   --topic-keywords "__no_such_keyword_so_topic_layer_passes_everything__" > "$W/funnel.txt" 2>&1
 sed -n '/^L0/,$p' "$W/funnel.txt"

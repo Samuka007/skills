@@ -152,10 +152,10 @@ chk "mixed: blocks = present+empty" \
   "$(col mixed.jsonl thinking_blocks)" \
   "$(( $(col mixed.jsonl signature_present) + $(col mixed.jsonl signature_empty) ))"
 
-# --------------------------------------------- B: the layer is OFF by default
+# --------------------------------------------- B: the layer is OFF once cleared
 echo
-echo "== B: no --sig-ratio-min means the stage is off, and says so =="
-python3 "$F" run "$WORK/candidates.tsv" "$WORK/out.tsv" --preset report \
+echo "== B: the policy's floor cleared (--no-signature) means OFF, and it says so =="
+python3 "$F" run "$WORK/candidates.tsv" "$WORK/out.tsv" --no-signature \
   --min-turns 1 --max-tool-ratio 1.0 --no-end-turn --topic-keywords "" \
   > "$WORK/run.off" 2>&1
 row="$(sed -n 's/^\(L3 signature.*\)$/\1/p' "$WORK/run.off")"
@@ -178,7 +178,7 @@ has "the off reason names the key that turns it on" "$row" "sig_ratio_min"
 # --------------------------------- C: on -> present passes, empty fails, skips
 echo
 echo "== C: --sig-ratio-min 0.30 =="
-python3 "$F" run "$WORK/candidates.tsv" "$WORK/out.tsv" --preset report \
+python3 "$F" run "$WORK/candidates.tsv" "$WORK/out.tsv" \
   --min-turns 1 --max-tool-ratio 1.0 --no-end-turn --topic-keywords "" \
   --sig-ratio-min 0.30 > "$WORK/run.on" 2>&1
 row="$(sed -n 's/^\(L3 signature.*\)$/\1/p' "$WORK/run.on")"
@@ -199,7 +199,7 @@ hasnt "empty was killed" "$(survivors)" "empty.jsonl"
 # -------------------------------------------- D: the floor actually decides
 echo
 echo "== D: the ratio floor discriminates (mixed.jsonl is 0.33) =="
-python3 "$F" run "$WORK/candidates.tsv" "$WORK/out.tsv" --preset report \
+python3 "$F" run "$WORK/candidates.tsv" "$WORK/out.tsv" \
   --min-turns 1 --max-tool-ratio 1.0 --no-end-turn --topic-keywords "" \
   --sig-ratio-min 0.34 > "$WORK/run.hi" 2>&1
 chk "floor above the ratio kills it" "$(cell L3 5 hi)" "2"

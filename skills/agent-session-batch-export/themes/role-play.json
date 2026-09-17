@@ -2,7 +2,7 @@
   "schema_version": 1,
   "kind": "theme",
   "pack_id": "theme-role-play",
-  "pack_version": "2.0.0",
+  "pack_version": "3.0.0",
   "theme": "role-play",
   "label": {
     "en": "role-play",
@@ -22,53 +22,10 @@
     "ooc",
     "设定"
   ],
-  "exclude_keywords": [
-    "shellcheck",
-    "stack trace",
-    "traceback",
-    "compile error",
-    "segfault",
-    "git rebase",
-    "git merge",
-    "pull request",
-    "dockerfile",
-    "docker compose",
-    "kubectl",
-    "systemctl",
-    "nixos-rebuild",
-    "npm install",
-    "pip install",
-    "cargo build",
-    "pytest",
-    "unit test",
-    "重构",
-    "报错",
-    "调试",
-    "编译",
-    "部署",
-    "服务器配置",
-    "数据库迁移"
-  ],
-  "policy": {
-    "min_user_turns": 0,
-    "min_assistant_turns": 5,
-    "sig_ratio_min": 0.3,
-    "require_end_turn": true,
-    "max_tool_ratio": 0.05,
-    "dedup_threshold": 0.6,
-    "min_user_msg_chars": 20,
-    "max_first_msg_chars": 4000,
-    "topic_match": "any"
+  "override": {
+    "max_tool_ratio": 0.05
   },
   "_provenance": {
-    "min_user_turns": "DECISION (supersedes the reference): no turn floor. The reference bundle's own entries are multi-turn (translation 7 and 8; role-play 15/30/45), but those are descriptive statistics of one delivered batch, not a buy-side standard. A one-shot request whose work is in the answer qualifies, so the floor is 0 and the turn count is recorded rather than used to kill. Every other stage still applies.",
-    "min_assistant_turns": "reference funnel criteria ①; NO funnel stage consumes it — reported as unenforced, never silently applied",
-    "sig_ratio_min": "reference funnel criteria ③: 'sig_ratio<30%' removed",
-    "require_end_turn": "reference funnel: 'session closed stop_reason=end_turn'; codex has no such field and is skipped, not failed",
-    "max_tool_ratio": "role-play is prose-only; the tighter ceiling is the funnel's validated roleplay preset",
-    "dedup_threshold": "reference funnel: near-duplicate template clusters removed; the Jaccard value is this repository's",
-    "min_user_msg_chars / max_first_msg_chars": "this repository's own length stage; the reference has no equivalent",
-    "topic_match": "'any' because a session counts under every theme it satisfies (the reference coverage table sums past its session count)",
-    "exclude_keywords": "DECISION: 'mainly not code' is a negative property, so coding signals are what disqualify. Shared by every theme in this family"
+    "max_tool_ratio": "role-play is prose-only; the tighter ceiling is the funnel's validated roleplay preset"
   }
 }

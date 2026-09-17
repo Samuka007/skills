@@ -136,8 +136,14 @@ awk '
   inside && /\]/ { exit }
   inside {
     line = $0
-    gsub(/[",[:space:]]/, "", line)
-    if (line != "") print line
+    # v2 entries are objects: one `"theme": "<name>"` per line. Extract the
+    # value with plain POSIX awk (RSTART/RLENGTH, no gawk-only 3-arg match).
+    if (match(line, /"theme"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+      val = substr(line, RSTART, RLENGTH)
+      sub(/^.*:[[:space:]]*"/, "", val)
+      sub(/"$/, "", val)
+      if (val != "") print val
+    }
   }
 ' "$SKILL/direction.json" > "$actual_themes"
 if cmp -s "$expected_themes" "$actual_themes"; then
@@ -145,8 +151,28 @@ if cmp -s "$expected_themes" "$actual_themes"; then
 else
   no "direction theme list differs from the six-name contract"
 fi
+if contains_file "$SKILL/direction.json" '"schema_version": 2'; then
+  ok "direction is schema_version 2"
+else
+  no "direction schema_version is not 2"
+fi
+if contains_file "$SKILL/direction.json" '"override"'; then
+  ok "direction carries the root override block"
+else
+  no "direction is missing the root override block"
+fi
+# The one thing the override exists for: the shared coding-signal exclusion
+# list. Its length is the shipped contract (the 25 coding signals every theme
+# in this family judges with); a silent shrink would quietly stop excluding.
+excl_count="$(awk '
+  /"exclude_keywords"/ { inside = 1; next }
+  inside && /\]/ { exit }
+  inside { n += gsub(/,/, ","); pending = 1 }
+  END { print n + pending + 0 }
+' "$SKILL/direction.json")"
+chk "the shared exclusion list ships 25 signals" "25" "$excl_count"
 for forbidden in defaults overrides keywords min_user_turns min_assistant_turns \
-  sig_ratio_min require_end_turn max_tool_ratio dedup_threshold; do
+  sig_ratio_min require_end_turn max_tool_ratio dedup_threshold policy; do
   if contains_file "$SKILL/direction.json" "\"$forbidden\""; then
     no "direction does not copy policy key $forbidden"
   else

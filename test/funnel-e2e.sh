@@ -23,7 +23,7 @@ echo "  candidates: $total"
 
 echo "== funnel --in-place =="
 python3 "$FUNNEL" run "$WORK/candidates.tsv" unused --in-place \
-  --preset report --min-turns 1 --max-tool-ratio 1.0 --no-end-turn \
+  --no-signature --min-turns 1 --max-tool-ratio 1.0 --no-end-turn \
   --topic-keywords "" --no-dedup | sed -n '2,3p'
 [[ -f "$WORK/candidates.full.tsv" ]] || { echo "FAIL: full archive missing"; fail=1; }
 surv=$(awk -F'\t' 'NR>1' "$WORK/candidates.tsv" | wc -l | tr -d ' ')

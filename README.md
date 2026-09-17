@@ -22,9 +22,10 @@ npx skills add Samuka007/skills \
 | [`session-export-nocode`](skills/session-export-nocode/SKILL.md) | Export the non-code direction: six themes, selected by the base skill's deterministic funnel rather than by an agent reading prose. Invoked by hand; only an explicit opt-out phrase skips the confirmation. |
 
 Two layers, one rule about where a change lands. The **base skill** owns the
-mechanism (the funnel), the themes, and the pipeline. A **direction bundle**
-owns only a theme list and its invocation policy — it restates no threshold, so
-adding a purchase direction adds one small skill and changes no numbers.
+mechanism (the funnel), the global policy, the themes, and the pipeline. A
+**direction bundle** owns only a theme list, the overrides that define the
+purchase, and its invocation policy — it restates no threshold, so adding a
+purchase direction adds one small skill and changes no numbers.
 
 Two published skills have been retired — `trajectory-packs`, and the engine
 directory `trajectory-funnel` beside it — and replaced by the two above. The
@@ -46,7 +47,8 @@ whether you will review the selection:
 > 语料包，不用人工审。
 
 The selection on the direction path is deterministic — a Python funnel applies
-the theme thresholds, the agent never judges prose. Skipping review is explicit
+the global policy and the direction's overrides, and the agent never judges
+prose. Skipping review is explicit
 or absent: the launcher derives `--yolo` only from the exact phrases
 `直接导出` / `无需确认` / `不用确认` / `无须确认`, and refuses the flag
 passed by hand; anything else stops at a confirmation prompt.
@@ -83,8 +85,8 @@ matrix: [skill README](skills/agent-session-batch-export/README.md).
 
 ```
 skills/<skill-name>/SKILL.md     # required, with YAML frontmatter  (shipped)
-skills/<skill-name>/scripts/     # executable code                  (shipped)
-skills/<skill-name>/themes/      # theme policy JSON: every threshold (shipped)
+skills/<skill-name>/scripts/     # executable code + policy.json, the shared quality standard (shipped)
+skills/<skill-name>/themes/      # theme identity: keywords, label, optional overrides (shipped)
 
 docs/<skill-name>/               # maintainer notes          (repo only)
 docs/RELEASE-NOTES.md            # retirements, and what replaced them (repo only)

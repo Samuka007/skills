@@ -13,9 +13,10 @@ junk mechanically, stage by stage, so screening lands only on survivors.
 
 Mechanism layer of the session-export skill family. **The stage order and
 the shape of each stage's predicate are fixed here; the parameters come from
-a theme file (`--policy`) or from flags** — never from this code. The
-agent never parses session JSONL itself: it reads the funnel table and the
-enriched candidates TSV this script prints.
+the global policy (`scripts/policy.json`), layered with theme, direction, and
+flag overrides** — never from this code. The agent never parses session JSONL
+itself: it reads the funnel table and the enriched candidates TSV this script
+prints.
 
 > Ships inside `agent-session-batch-export` as `scripts/funnel.py`. It was once
 > a separate `trajectory-funnel` directory with no `SKILL.md`, which made it
@@ -32,41 +33,39 @@ Cheap stages run before expensive ones: metadata → line scan → JSON parse.
 |---|---|---|
 | L1 turns | user-turn floor | greeting stubs ("hi") |
 | L2 tool_ratio | assistant tool_use share ceiling | tool-heavy coding runs when the interest is prose |
-| L3 signature | thinking-signature ratio floor, **off by default** | sessions whose thinking blocks carry no signature (a relay or client stripped it) |
+| L3 signature | thinking-signature ratio floor, **off unless the merged policy carries `sig_ratio_min` (`--no-signature` clears it)** | sessions whose thinking blocks carry no signature (a relay or client stripped it) |
 | L4 end_turn | last assistant `stop_reason == end_turn` | truncated sessions ending mid-tool-call; codex skips (no `stop_reason` field in the format); a claude_code session whose last assistant record lacks the field fails |
 | L5 length | user-message length distribution | scaffold noise (huge first prompt, tiny real request) |
-| L6 topic | keyword/regex over extracted user prose | off-topic sessions (the only stage reading message bodies) |
-| L7 noncode | coding-signal exclusion over user prose, **off unless the theme sets `exclude_keywords`** | sessions that are coding work. "Mainly not code" is a negative property, so absence of coding signal is what qualifies — a positive keyword list cannot select a session like `你有图片生成能力吗？` |
+| L6 topic | keyword/regex over extracted user prose, **off when the active word list is empty or absent** | off-topic sessions (the only stage reading message bodies) |
+| L7 noncode | coding-signal exclusion over user prose, **off unless `exclude_keywords` reaches it — a direction root `override`, `--exclude-keywords`, or an override file** | sessions that are coding work. "Mainly not code" is a negative property, so absence of coding signal is what qualifies — a positive keyword list cannot select a session like `你有图片生成能力吗？` |
 | L8 credential | credential shapes over the **complete raw JSONL** | nothing: it annotates and never drops, because exporting the remainder would hide the finding. `--credential-hard-gate` turns any surviving hit into a whole-batch refusal (exit 3) |
 | L9 dedup | 5-gram Jaccard over first user messages, cross-row | near-duplicate template clusters (keeps the longest) |
 
 Every stage reports `(in, out, killed, skipped, reason)` — the printed funnel
 table is the only decision surface you need for re-tuning.
 
-### L3 signature: measured per session, gated by the theme
+### L3 signature: measured per session, gated by the merged policy
 
 The funnel reads what the session file says; the threshold is
 [`docs/session-export/PACK-SPEC.md`](../session-export/PACK-SPEC.md)
-§ 4 and comes in through the theme file, never from this code.
+§ 4 and comes in through the merged policy, never from this code.
 
-**The stage is off unless the theme sets `sig_ratio_min`.** No preset sets one,
-so a run that does not ask for the layer behaves exactly as it did before it
-existed. When it is off **its row is still printed**, with `OFF` where the kill
-count would sit and the missing theme key named in the reason:
-
-```
-L3 signature         13   OFF       off (this pack sets no sig_ratio_min)
-```
+**The stage runs when the merged policy carries `sig_ratio_min` — the shipped
+global policy does.** `--no-signature` clears the key for one run, and so does
+an override file with `"sig_ratio_min": null`. When the key is absent **the
+row is still printed**, with `OFF` where the kill count would sit and the
+missing key named in the reason, so an auditor can tell a cleared layer from
+a passed one.
 
 That is deliberate, and it is the property to preserve when extending this:
 every stage keeps a row whether or not it ran. A reader auditing a delivered
 batch has only this table, and if the row vanished, "this layer ran and skipped
-codex" and "this layer never ran" would print identically. Turn the layer on
+codex" and "this layer never ran" would print identically. Turn the layer off
 with:
 
 ```bash
 python3 scripts/funnel.py run /tmp/cur/candidates.tsv /tmp/cur/.unused --in-place \
-  --preset report --sig-ratio-min 0.30
+  --no-signature
 ```
 
 Each session lands in one of three states, and the difference is the point:
@@ -117,22 +116,49 @@ prose that merely mentions the tag. The excluded count is carried in `enrich`
 as the `injected_user_messages` column next to `user_turns`, so the correction
 is visible instead of silently folded into the number. This matters twice
 downstream: `first_user_msg` is the first *real* request (the L6 topic stage
-and L7 dedup both read it), and the pack's `min_user_turns` floor means real
-turns, not injected ones.
+and L7 dedup both read it), and the policy's `min_user_turns` floor means
+real turns, not injected ones.
 
-## Presets
+## The five layers a `run` merges
 
-```bash
-python3 scripts/funnel.py presets
-```
+There are no presets and no per-theme policy blocks. Every parameter of every
+stage comes from one global policy — `scripts/policy.json`, the shared quality
+standard — which the engine resolves beside itself and hard-requires: a
+missing file is an error with the path in it, never a default. Four optional
+layers delta that policy, merged per key, the later layer winning:
 
-| Preset | For | Defaults (key ones) |
-|---|---|---|
-| `report` | reports / slides / writing / translation | min_turns 5, tool_ratio ≤ 0.15, end_turn required, topic keywords |
-| `roleplay` | roleplay / creative writing | min_turns 10, tool_ratio ≤ 0.05, end_turn required, topic keywords |
-| `coding` | coding sessions | tool_ratio ≤ 1.0, no end_turn / length / topic constraints, loose dedup |
+| Order | Layer | Source | What it is for |
+|---|---|---|---|
+| 1 | global policy | `scripts/policy.json` | the shared quality standard; the only layer that must exist |
+| 2 | theme `override` | `override` in `themes/<name>.json` | per-theme calibration (translation's per-message floor, role-play's tool ceiling, coding's tool-heavy profile) |
+| 3 | direction root `override` | `override` in the direction JSON | what the purchase constrains (the noncode direction's `exclude_keywords`) |
+| 4 | direction entry `override` | an entry's `override` in the direction's `themes` array | a per-theme delta inside one direction |
+| 5 | flags | `run` arguments and `--override-file FILE` | one-off overrides for a single run |
 
-Presets are data, not code — every parameter can be overridden by a flag.
+The per-key semantics are the same at every boundary:
+
+- A value replaces the value under it whole — a number, a string, or a list.
+- `"key": null` clears the key: the stage it feeds turns OFF, exactly as if
+  no layer had ever supplied it.
+- An empty list is an explicit clear, not a missing one: `"keywords": []`
+  turns L6 OFF instead of passing everything. An absent word list behaves the
+  same way, which is why a theme without keywords can never read as "selects
+  everything".
+- An unknown key is a hard error at every layer, so a typo cannot silently
+  configure nothing. Old-format files are rejected the same way: a theme that
+  still carries a `policy` block or a top-level `exclude_keywords`, and a
+  direction whose `themes` entries are plain strings, fail with the migration
+  named, not approximately.
+
+The table header names what was merged, on one line:
+`policy: standard   theme: translation   surviving 12 / 340` — the policy
+name comes from the policy file, `theme: none` means the run carries no topic
+constraint, and `surviving` is the row count in and out.
+
+The policy also carries two keys no funnel stage consumes —
+`min_assistant_turns` and `topic_match`. The engine reports them in a note, as
+recorded but unenforced, rather than applying them silently; a stage that
+starts consuming one moves it out of that note in the same change.
 
 ## Quickstart
 
@@ -143,8 +169,9 @@ OUT=/tmp/cur
 
 bash $C scan -o $OUT --workspace myproject --min-lines 20   # -> OUT/candidates.tsv
 
-# run the funnel and let the survivors BE the scan output (recommended)
-python3 "$F" run "$OUT/candidates.tsv" "$OUT/.unused" --in-place --preset report
+# run the funnel under the global policy and let the survivors BE the scan
+# output (recommended); add --theme NAME for a topic word list
+python3 "$F" run "$OUT/candidates.tsv" "$OUT/.unused" --in-place
 
 # now the normal review flow continues over the survivors only
 bash $C review --ui tsv -o $OUT
@@ -157,17 +184,23 @@ from survivors with empty `suggested`/`reason` columns). A side-file filter
 would silently do nothing to the interactive flow. Without `--in-place`,
 survivors are written to the second path and inputs are left alone.
 
-Overriding parameters is plain flags on `run`:
+Overriding parameters is plain flags on `run`, layered over the theme:
 
 ```bash
 python3 "$F" run "$OUT/candidates.tsv" "$OUT/.unused" --in-place \
-  --preset report --min-turns 8 --max-tool-ratio 0.10 \
-  --topic-keywords "报告,ppt,总结" --no-dedup
+  --theme translation --min-turns 8 --max-tool-ratio 0.10 --no-dedup
 ```
 
-Subcommands: `run` (filter), `enrich` (add computed columns — turns, tool
-counts, last stop reason, chars, signature state — without filtering),
-`presets` (list them).
+L7's word list comes from whichever layer names it — a flag here, the
+direction root `override` on the direction path:
+
+```bash
+python3 "$F" run "$OUT/candidates.tsv" "$OUT/.unused" --theme translation \
+  --exclude-keywords "重构,调试,编译"
+```
+
+Subcommands: `run` (filter) and `enrich` (add computed columns — turns, tool
+counts, last stop reason, chars, signature state — without filtering).
 
 ## Demo
 
@@ -195,8 +228,9 @@ recording, that GIF and the reproduction script sit beside this file:
   distinguishable from a pass.
 - Cheap stages before expensive ones: metadata < line scan < JSON parse.
 - Unknown session formats are **skipped and counted**, never guessed.
-- Thresholds are policy and live in the pack; a stage that needs one is gated
-  off until the pack supplies it, prints `OFF` when it did not run, and **keeps
+- Thresholds are policy and live in the merged configuration (the global
+  policy, then the overrides); a stage that needs one is gated off until the
+  configuration supplies it, prints `OFF` when it did not run, and **keeps
   its row either way** — a stage that never ran must not look like one that
   passed everything.
 - Output stays compatible with the existing `screen.tsv` contract

@@ -41,12 +41,14 @@ echo "dedup e2e — work dir: $WORK"
 echo "script: $(basename "$F")"
 
 # ---------------------------------------------------------------- fixtures
-# Four claude_code sessions, each passing every per-row stage of the `report`
-# preset (5 user turns, no tool use, `end_turn` closure, topic keyword in the
-# opening prose), so the funnel actually reaches L9. d1/d2/d3 differ in their
-# first user message; `twin` repeats d1's verbatim, which is the pair dedup is
-# for. The opening prose is deliberately the ONLY thing distinguishing them:
-# dedup compares first user messages.
+# Four claude_code sessions, each passing every per-row stage of the global
+# policy (no tool use, `end_turn` closure, later messages clearing the length
+# floor), so the funnel actually reaches L9 — with no theme, the topic stage
+# is OFF and the dedup threshold comes from scripts/policy.json (0.6), which
+# is the "default threshold" section A asserts. d1/d2/d3 differ in their first
+# user message; `twin` repeats d1's verbatim, which is the pair dedup is for.
+# The opening prose is deliberately the ONLY thing distinguishing them: dedup
+# compares first user messages.
 rm -rf "$WORK"; mkdir -p "$WORK/src"
 python3 - "$WORK" <<'PY'
 import json, os, sys
@@ -94,7 +96,7 @@ row() { sed -n 's/^\(L9 dedup.*\)$/\1/p' "$WORK/$1"; }
 # ------------------------------------------------- A: dedup runs by default
 echo
 echo "== A: default threshold -- a twin pair collapses =="
-python3 "$F" run "$WORK/candidates4.tsv" "$WORK/out.on.tsv" --preset report \
+python3 "$F" run "$WORK/candidates4.tsv" "$WORK/out.on.tsv" \
   > "$WORK/run.on" 2>&1
 chk "4 in, the duplicate collapsed"        "$(survivors out.on.tsv)" "3"
 chk "L9 killed exactly the twin"           "$(cell 5 run.on)" "1"
@@ -105,7 +107,7 @@ has "the kill names its near-duplicate"    "$(row run.on)" "near-duplicate of"
 # The literal acceptance in SPEC item 18: N pairwise-distinct sessions in, N out.
 echo
 echo "== B: --no-dedup over 3 pairwise-distinct sessions =="
-python3 "$F" run "$WORK/candidates3.tsv" "$WORK/out.off.tsv" --no-dedup --preset report \
+python3 "$F" run "$WORK/candidates3.tsv" "$WORK/out.off.tsv" --no-dedup \
   > "$WORK/run.off" 2>&1
 chk "3 in, 3 out"                          "$(survivors out.off.tsv)" "3"
 chk "L9 row reports the same survivors"    "$(cell 3 run.off)" "3"
@@ -123,7 +125,7 @@ has "the off reason names the key that turns it on" "$(row run.off)" "dedup_thre
 # kept exactly 1 of 4.
 echo
 echo "== C: --no-dedup with a twin pair present keeps both =="
-python3 "$F" run "$WORK/candidates4.tsv" "$WORK/out.off4.tsv" --no-dedup --preset report \
+python3 "$F" run "$WORK/candidates4.tsv" "$WORK/out.off4.tsv" --no-dedup \
   > "$WORK/run.off4" 2>&1
 chk "4 in, 4 out"                          "$(survivors out.off4.tsv)" "4"
 chk "both twins survive"                   "$(grep -c 'twin.jsonl' "$WORK/out.off4.tsv")" "1"
@@ -136,7 +138,7 @@ chk "L9 still prints OFF"                  "$(cell 4 run.off4)" "OFF"
 # produced by accident.
 echo
 echo "== D: --dedup-threshold 0.0 still collapses every survivor into one =="
-python3 "$F" run "$WORK/candidates4.tsv" "$WORK/out.zero.tsv" --dedup-threshold 0.0 --preset report \
+python3 "$F" run "$WORK/candidates4.tsv" "$WORK/out.zero.tsv" --dedup-threshold 0.0 \
   > "$WORK/run.zero" 2>&1
 chk "4 in, 1 out"                          "$(survivors out.zero.tsv)" "1"
 chk "L9 ran and killed 3"                  "$(cell 5 run.zero)" "3"
