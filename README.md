@@ -36,7 +36,22 @@ delete and what to install.
 ## Using
 
 After install both skills live in `~/.agents/skills/`. Three entry points,
-by who drives:
+ordered by how often you will want them. The golden path is the first.
+
+**Golden path — one-click direction export.** The non-code direction bundles
+four prose topics (role-play, 写作, 策划, 报告分析), the shared quality
+standard, and the non-code exclusion list; one command runs the deterministic
+selection and hands back a verified archive:
+
+```bash
+bash ~/.agents/skills/session-export-nocode/scripts/session-export-nocode.sh \
+  --request "直接导出非代码会话" \
+  --out ./out
+```
+
+The opt-out phrase (`直接导出` / `无需确认` / `不用确认` / `无须确认`) is what
+skips the confirmation; without one of those exact phrases the same command
+stops at a single `[y/N]`.
 
 **Ask your agent.** Agents with skill discovery (codex, claude code, opencode,
 …) find the installed skill from your request and drive the scripts for you.
@@ -52,15 +67,6 @@ prose. Skipping review is explicit
 or absent: the launcher derives `--yolo` only from the exact phrases
 `直接导出` / `无需确认` / `不用确认` / `无须确认`, and refuses the flag
 passed by hand; anything else stops at a confirmation prompt.
-
-**The direction command.** The non-code direction is human-invoked; the
-launcher owns the opt-out policy above, so you never touch `--yolo` yourself:
-
-```bash
-bash ~/.agents/skills/session-export-nocode/scripts/session-export-nocode.sh \
-  --request "直接导出非代码会话" \
-  --out ./out
-```
 
 **Run the pipeline yourself.** Interactive, one command, lands in the fzf
 picker; your ENTER finalizes and verifies every kept copy byte-identical in

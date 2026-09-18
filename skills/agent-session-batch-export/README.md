@@ -82,7 +82,19 @@ The shipped direction is [`session-export-nocode`](../session-export-nocode/SKIL
 
 ## Quickstart
 
-Entry point by what can see a terminal, not by preference.
+**Shipping golden path (headless, non-code):** the direction one-click. Themes,
+the shared quality standard and the non-code exclusion list are already
+composed in the direction bundle; nothing is screened by an agent — see
+[§ Direction export](#direction-export-the-selection-is-deterministic):
+
+```bash
+bash ~/.agents/skills/session-export-nocode/scripts/session-export-nocode.sh \
+  --request "直接导出非代码会话" \
+  --out ./out
+```
+
+For everything else, pick the entry point by what can see a terminal, not by
+preference.
 
 **Interactive — you can open a terminal.** One command runs the whole
 pipeline and lands in the fzf picker (spawning a terminal itself when run

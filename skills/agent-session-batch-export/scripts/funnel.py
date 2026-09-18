@@ -75,11 +75,22 @@ Thresholds are policy and live in the policy/theme/override layers, never in
 this file (PACK-SPEC § 4); the mechanism knows only the shape.
 
 Usage:
-  python3 funnel.py enrich  CANDIDATES.tsv OUT.tsv      # add computed columns
+  python3 funnel.py enrich  CANDIDATES.tsv OUT.tsv      # add computed columns:
+                            #   turns/tools/stop/chars/signature, plus the
+                            #   item-27 annotation columns (tool pairing,
+                            #   repeats, error streaks, verification calls,
+                            #   refusal/wrapper proxies, single-shot,
+                            #   modalities, capabilities, replay blockers)
   python3 funnel.py run     CANDIDATES.tsv OUT.tsv                    # global policy only
   python3 funnel.py run     CANDIDATES.tsv OUT.tsv --theme translation
   python3 funnel.py run     CANDIDATES.tsv OUT.tsv --theme translation \
                             --override-file RUN.json [--min-turns 5 ...]
+  python3 funnel.py collect CANDIDATES.tsv OUTDIR [--theme NAME]      # collection
+                            # posture: no thresholds, policy.json not read;
+                            # drops only unparseable rows and exact
+                            # duplicates, keeps the rest with every
+                            # annotation column (pool.tsv) and one row card
+                            # per row (row-cards.jsonl)
 
 The 'run' funnel table goes to stdout; OUT.tsv is the surviving candidates
 plus computed columns, shaped for curate-sessions.sh review --ui tsv.
@@ -88,6 +99,7 @@ plus computed columns, shaped for curate-sessions.sh review --ui tsv.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -147,6 +159,36 @@ class SessionView:
     # reporting.
     credential_count: int = 0
     credential_kinds: list[str] = field(default_factory=list)
+    # --- collection annotations (SPEC item 27). Pure additions: every field
+    # below defaults to a no-value and no existing column or stage verdict
+    # reads them. All are mechanical derivations from the same single pass
+    # the parsers already run; none applies a threshold.
+    # First assistant message text — the refusal proxy's only surface.
+    first_assistant_msg: str = ""
+    # Tool pairing, by call id: results missing for calls, and orphans the
+    # other way. A call the file lost the answer to is a replay blocker.
+    tool_call_ids: set[str] = field(default_factory=set)
+    tool_result_ids: set[str] = field(default_factory=set)
+    # Repeat counts keyed by (tool name, arguments digest); the max is the
+    # loop signature a row card wants.
+    tool_repeat_counts: dict[tuple[str, str], int] = field(default_factory=dict)
+    # Consecutive failed tool results (claude `is_error`, codex explicit
+    # failure markers), current streak plus the max it reached.
+    tool_error_streak: int = 0
+    tool_error_streak_max: int = 0
+    # Tool calls whose command text hit a verification pattern.
+    verification_commands: int = 0
+    # Modality facets observed in message content (MODALITY_ORDER fixes the
+    # emission order).
+    modalities: set[str] = field(default_factory=set)
+    # Distinct capability ids seen (static TOOL_CAPABILITIES map) and the
+    # distinct tool names the map does not know.
+    capability_calls: set[str] = field(default_factory=set)
+    unmapped_tool_names: set[str] = field(default_factory=set)
+    # An explicit truncated-output marker in a tool output (codex writes one);
+    # and whether any call went to a live network service.
+    has_truncation_marker: bool = False
+    has_network_call: bool = False
 
     @property
     def credential_hit(self) -> int:
@@ -169,6 +211,85 @@ class SessionView:
         if not self.thinking_blocks:
             return "absent"
         return "present" if self.signature_present else "empty"
+
+    @property
+    def tool_calls_missing_results(self) -> int:
+        """Calls with no paired result in the file."""
+        return len(self.tool_call_ids - self.tool_result_ids)
+
+    @property
+    def tool_results_orphan(self) -> int:
+        """Results with no paired call in the file."""
+        return len(self.tool_result_ids - self.tool_call_ids)
+
+    @property
+    def tool_repeat_max(self) -> int:
+        """Most repeats of one (tool name, arguments digest)."""
+        return max(self.tool_repeat_counts.values(), default=0)
+
+    @property
+    def single_shot(self) -> int:
+        """1 when the session is exactly one real user turn."""
+        return 1 if self.user_turns == 1 else 0
+
+    @property
+    def input_modalities(self) -> str:
+        """Comma list of observed modality facets, canonical order."""
+        return ",".join(m for m in MODALITY_ORDER if m in self.modalities)
+
+    @property
+    def capabilities(self) -> str:
+        """Comma list of distinct mapped capability ids, sorted."""
+        return ",".join(sorted(self.capability_calls))
+
+    @property
+    def tools_unmapped(self) -> int:
+        """Distinct tool names the static capability map does not know."""
+        return len(self.unmapped_tool_names)
+
+    @property
+    def refusal_proxy(self) -> int:
+        """1 when the first assistant message opens refusal-shaped."""
+        if not self.first_assistant_msg:
+            return 0
+        text = norm(self.first_assistant_msg)
+        return 1 if any(p in text for p in REFUSAL_PATTERNS) else 0
+
+    @property
+    def synthetic_wrapper(self) -> int:
+        """1 when the first real user message starts with a wrapper prefix."""
+        if not self.first_user_msg:
+            return 0
+        text = norm(self.first_user_msg).lstrip()
+        return 1 if any(text.startswith(p) for p in SYNTHETIC_WRAPPER_PREFIXES) else 0
+
+    @property
+    def replay_blockers(self) -> str:
+        """Why a faithful replay of this session would diverge, comma list.
+
+        Three mechanical findings, each its own proxy:
+          * missing_tool_results — a call's answer is not in the file;
+          * truncated_output — an explicit truncation marker in a tool output
+            (codex writes `Warning: truncated output`), or a claude session
+            whose last assistant record carries no stop_reason at all (the
+            exact signal the L4 closure stage fails on: the tail was cut or
+            rewritten). Codex records no stop_reason, so the second proxy
+            never fires there and the marker is its only signal;
+          * external_service — a call to a live network capability, whose
+            response no replay can reproduce.
+        """
+        out: list[str] = []
+        if self.tool_calls_missing_results:
+            out.append("missing_tool_results")
+        if self.has_truncation_marker or (
+            self.fmt == "claude_code"
+            and self.assistant_turns > 0
+            and not self.last_stop_reason
+        ):
+            out.append("truncated_output")
+        if self.has_network_call:
+            out.append("external_service")
+        return ",".join(out)
 
 
 def _content_text(content) -> str:
@@ -243,6 +364,294 @@ def _scan_credentials(v: SessionView, raw: str) -> None:
                 v.credential_kinds.append(name)
 
 
+# ---------------------------------------------------------------------------
+# collection annotations (SPEC item 27). Mechanically derivable from the raw
+# JSONL parse — zero model tokens, no thresholds, never a kill: `collect`
+# ships them as pool columns and row cards, `enrich` as columns, and neither
+# gains a drop because of them. Every pattern table is centralized here so a
+# change to any proxy is one data edit and both parsers read the same table.
+# ---------------------------------------------------------------------------
+
+# Command surfaces that look like a test/verification run. Matched against a
+# tool call's command text only — never user prose, and never a Write call's
+# file content: authoring a test is not running one.
+VERIFICATION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bpytest\b", re.IGNORECASE),
+    re.compile(r"\bcargo\s+test\b", re.IGNORECASE),
+    re.compile(r"\bnpm\s+(?:run\s+)?test\b", re.IGNORECASE),
+    re.compile(r"\bnpx\s+(?:jest|vitest|mocha|playwright)\b", re.IGNORECASE),
+    re.compile(r"\bgo\s+test\b", re.IGNORECASE),
+    re.compile(r"\bmake\b", re.IGNORECASE),
+    re.compile(r"\btsc\b", re.IGNORECASE),
+    re.compile(r"lint\b", re.IGNORECASE),
+    re.compile(r"\bruff\b", re.IGNORECASE),
+    re.compile(r"\bmypy\b", re.IGNORECASE),
+    re.compile(r"\bflake8\b", re.IGNORECASE),
+)
+
+# Refusal phrasing, matched against the normalized (NFKC, lowercased) first
+# assistant message. A proxy, like every column here: it annotates a session
+# that opens with a refusal-shaped reply, it does not judge the session.
+REFUSAL_PATTERNS: tuple[str, ...] = (
+    "我不能",
+    "我无法",
+    "无法协助",
+    "无法帮助",
+    "i cannot",
+    "i can't",
+    "i'm unable",
+    "i am unable",
+    "i won't be able",
+    "i'm not able",
+    "i am not able",
+)
+
+# Packaging prefixes a wrapped/transplanted history starts its first real user
+# message with. Matched as a prefix of the normalized first user message.
+SYNTHETIC_WRAPPER_PREFIXES: tuple[str, ...] = (
+    "the following is the codex agent history",
+    "treat the transcript",
+)
+
+# Canonical emission order of the input-modality facets.
+MODALITY_ORDER: tuple[str, ...] = ("text", "code", "image", "document")
+
+
+def _note_text_modality(v: SessionView, text: str) -> None:
+    """Record the modality facets one message text carries.
+
+    Any non-blank text is `text`; a fenced code block inside it is also `code`.
+    Image and document facets come from content blocks, not from prose, so
+    they are recorded by the parsers' block loops instead of here.
+    """
+    if not text.strip():
+        return
+    v.modalities.add("text")
+    if "```" in text:
+        v.modalities.add("code")
+
+
+def _note_tool_error(v: SessionView, failed: bool) -> None:
+    """Advance the consecutive-error streak over tool results, in file order."""
+    if failed:
+        v.tool_error_streak += 1
+        v.tool_error_streak_max = max(v.tool_error_streak_max, v.tool_error_streak)
+    else:
+        v.tool_error_streak = 0
+
+
+def _note_tool_call(v: SessionView, name: str, digest: str, surface: str) -> None:
+    """Accumulate the per-call annotations: repeat key, capability, verifier.
+
+    `digest` is the stable per-format summary of the call's arguments (the
+    repeat key's second half); `surface` is the call's command text, or ""
+    when the format carries none. An unmapped tool name is counted, never
+    guessed at: the unmapped counter is how a new tool surfaces.
+    """
+    if name:
+        cap = TOOL_CAPABILITIES.get(name.lower())
+        if cap is not None:
+            v.capability_calls.add(cap)
+            if cap in NETWORK_CAPABILITIES:
+                v.has_network_call = True
+        else:
+            v.unmapped_tool_names.add(name)
+    key = (name, digest)
+    v.tool_repeat_counts[key] = v.tool_repeat_counts.get(key, 0) + 1
+    if surface and any(rx.search(surface) for rx in VERIFICATION_PATTERNS):
+        v.verification_commands += 1
+
+
+# Input keys a call's command text may ride in. The list is deliberately
+# short: matching against arbitrary input fields would count a Write call
+# whose file content mentions pytest as a verification run.
+COMMAND_FIELDS: tuple[str, ...] = ("command", "cmd", "script")
+
+
+def _command_surface_from_object(obj: object) -> str:
+    """Join a call payload's command-like fields into one match surface."""
+    if not isinstance(obj, dict):
+        return ""
+    parts = []
+    for k in COMMAND_FIELDS:
+        val = obj.get(k)
+        if isinstance(val, str):
+            parts.append(val)
+        elif isinstance(val, list):
+            parts.append(" ".join(str(x) for x in val))
+    return " ".join(parts)
+
+
+def _note_claude_tool_call(v: SessionView, block: dict) -> None:
+    """Annotations for one claude `tool_use` block."""
+    name = str(block.get("name") or "")
+    call_id = block.get("id")
+    if isinstance(call_id, str) and call_id:
+        v.tool_call_ids.add(call_id)
+    payload = block.get("input")
+    digest = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    # claude inputs are structured: command fields only, no raw fallback —
+    # a Write call's content naming a test runner must not read as one.
+    _note_tool_call(v, name, digest, _command_surface_from_object(payload))
+
+
+def _note_claude_tool_result(v: SessionView, block: dict) -> None:
+    """Pairing + error state for one claude `tool_result` block."""
+    call_id = block.get("tool_use_id")
+    if isinstance(call_id, str) and call_id:
+        v.tool_result_ids.add(call_id)
+    _note_tool_error(v, bool(block.get("is_error")))
+    content = block.get("content")
+    if isinstance(content, list):
+        for c in content:
+            if isinstance(c, dict) and c.get("type") == "image":
+                v.modalities.add("image")
+
+
+def _note_codex_tool_call(v: SessionView, pl: dict) -> None:
+    """Annotations for one codex call record (the three call shapes)."""
+    pt = pl.get("type")
+    if pt == "local_shell_call":
+        name = "local_shell"
+        action = pl.get("action")
+        digest = json.dumps(action, sort_keys=True, ensure_ascii=False, default=str)
+        surface = _command_surface_from_object(action)
+    elif pt == "custom_tool_call":
+        # The JS bridge source embeds the command by construction
+        # (`tools.exec_command({cmd: …})`), so the raw input IS the surface.
+        name = str(pl.get("name") or "")
+        raw = pl.get("input")
+        if not isinstance(raw, str):
+            raw = json.dumps(raw, ensure_ascii=False, default=str)
+        digest = raw
+        surface = raw
+    else:  # function_call
+        name = str(pl.get("name") or "")
+        raw = pl.get("arguments")
+        if not isinstance(raw, str):
+            raw = json.dumps(raw, ensure_ascii=False, default=str)
+        digest = raw
+        try:
+            parsed: object = json.loads(raw)
+        except ValueError:
+            parsed = None
+        # Structured fields when the arguments parse; the raw string only
+        # when they do not (a malformed record is where the text fallback
+        # cannot misread a file payload as a command).
+        surface = (
+            _command_surface_from_object(parsed)
+            if isinstance(parsed, dict)
+            else raw
+        )
+    call_id = pl.get("call_id") or pl.get("id")
+    if isinstance(call_id, str) and call_id:
+        v.tool_call_ids.add(call_id)
+    _note_tool_call(v, name, digest, surface)
+
+
+def _flatten_codex_output(out: object) -> str:
+    """Flatten one codex tool output (string or content-item list) to text."""
+    if isinstance(out, str):
+        return out
+    if isinstance(out, list):
+        return "\n".join(
+            c.get("text", "") for c in out if isinstance(c, dict)
+        )
+    return ""
+
+
+def _codex_output_failed(flat: str) -> bool:
+    """The explicit failure markers a codex tool output carries.
+
+    Two shapes, both machine-readable: an output that OPENS with `error`
+    (measured: the exec bridge reports fetch failures exactly so), or a JSON
+    envelope whose `metadata.exit_code` is a nonzero integer.
+    """
+    if flat.lstrip().lower().startswith("error"):
+        return True
+    try:
+        doc: object = json.loads(flat)
+    except ValueError:
+        return False
+    if isinstance(doc, dict) and isinstance(doc.get("metadata"), dict):
+        code = doc["metadata"].get("exit_code")
+        return isinstance(code, int) and not isinstance(code, bool) and code != 0
+    return False
+
+
+def _note_codex_tool_output(v: SessionView, pl: dict) -> None:
+    """Pairing + error/truncation state for one codex `*_output` record."""
+    call_id = pl.get("call_id")
+    if isinstance(call_id, str) and call_id:
+        v.tool_result_ids.add(call_id)
+    flat = _flatten_codex_output(pl.get("output"))
+    if "warning: truncated output" in flat.lower():
+        v.has_truncation_marker = True
+    _note_tool_error(v, _codex_output_failed(flat))
+
+
+# Static tool-name -> capability map. Keys are lowercased tool names across
+# both formats; an unmapped name is counted in `tools_unmapped`, never
+# guessed. Network capabilities are the ones a faithful replay cannot
+# reproduce (live services), which is what the `external_service` replay
+# blocker reports.
+_CAP_CODE = "capability.code_execution"
+_CAP_FS_READ = "capability.filesystem_read"
+_CAP_FS_WRITE = "capability.filesystem_write"
+_CAP_SEARCH = "capability.search"
+_CAP_WEB_SEARCH = "capability.web_search"
+_CAP_WEB_FETCH = "capability.web_fetch"
+_CAP_DELEGATION = "capability.delegation"
+_CAP_PLANNING = "capability.planning"
+
+NETWORK_CAPABILITIES: frozenset[str] = frozenset({_CAP_WEB_SEARCH, _CAP_WEB_FETCH})
+
+TOOL_CAPABILITIES: dict[str, str] = {
+    # code execution
+    "bash": _CAP_CODE,
+    "bashoutput": _CAP_CODE,
+    "killshell": _CAP_CODE,
+    "local_shell": _CAP_CODE,
+    "shell": _CAP_CODE,
+    "exec": _CAP_CODE,
+    "exec_command": _CAP_CODE,
+    "container.exec": _CAP_CODE,
+    # filesystem read
+    "read": _CAP_FS_READ,
+    "read_file": _CAP_FS_READ,
+    "view": _CAP_FS_READ,
+    "view_image": _CAP_FS_READ,
+    # filesystem write
+    "edit": _CAP_FS_WRITE,
+    "write": _CAP_FS_WRITE,
+    "write_file": _CAP_FS_WRITE,
+    "multiedit": _CAP_FS_WRITE,
+    "notebookedit": _CAP_FS_WRITE,
+    "apply_patch": _CAP_FS_WRITE,
+    # search
+    "glob": _CAP_SEARCH,
+    "grep": _CAP_SEARCH,
+    "search": _CAP_SEARCH,
+    "codebase_search": _CAP_SEARCH,
+    "list_dir": _CAP_SEARCH,
+    "ls": _CAP_SEARCH,
+    # web
+    "websearch": _CAP_WEB_SEARCH,
+    "web_search": _CAP_WEB_SEARCH,
+    "webfetch": _CAP_WEB_FETCH,
+    "web_fetch": _CAP_WEB_FETCH,
+    "fetch": _CAP_WEB_FETCH,
+    # delegation
+    "task": _CAP_DELEGATION,
+    "agent": _CAP_DELEGATION,
+    # planning
+    "todowrite": _CAP_PLANNING,
+    "update_plan": _CAP_PLANNING,
+    "enterplanmode": _CAP_PLANNING,
+    "exitplanmode": _CAP_PLANNING,
+}
+
+
 def _count_blocks(v: SessionView, content) -> None:
     """Accumulate thinking-signature state from one `message.content[]`.
 
@@ -303,18 +712,42 @@ def parse_claude_code(path: Path) -> SessionView | None:
                 _count_blocks(v, content)
                 text = _content_text(content)
                 if role == "user":
+                    if isinstance(content, list):
+                        for b in content:
+                            if not isinstance(b, dict):
+                                continue
+                            bt = b.get("type")
+                            if bt == "tool_result":
+                                _note_claude_tool_result(v, b)
+                            elif bt == "image":
+                                v.modalities.add("image")
+                            elif bt == "document":
+                                v.modalities.add("document")
                     if text.strip():
                         v.user_turns += 1
                         v.user_chars.append(len(text))
                         v.user_texts.append(text)
+                        _note_text_modality(v, text)
                 else:
                     v.assistant_turns += 1
                     if isinstance(content, list):
-                        v.tool_uses += sum(
-                            1
-                            for b in content
-                            if isinstance(b, dict) and b.get("type") == "tool_use"
-                        )
+                        for b in content:
+                            if not isinstance(b, dict):
+                                continue
+                            bt = b.get("type")
+                            # Counted exactly as the old sum() counted it;
+                            # the annotation work rides the same iteration.
+                            if bt == "tool_use":
+                                v.tool_uses += 1
+                                _note_claude_tool_call(v, b)
+                            elif bt == "image":
+                                v.modalities.add("image")
+                            elif bt == "document":
+                                v.modalities.add("document")
+                    if text.strip():
+                        if not v.first_assistant_msg:
+                            v.first_assistant_msg = text
+                        _note_text_modality(v, text)
                     sr = rec.get("stop_reason") or msg.get("stop_reason") or ""
                     # Assigned unconditionally: this is the LAST assistant
                     # record's value, and an absent one there is the finding
@@ -373,6 +806,9 @@ def parse_codex(path: Path) -> SessionView | None:
                         for c in (pl.get("content") or [])
                         if isinstance(c, dict)
                     )
+                    for c in pl.get("content") or []:
+                        if isinstance(c, dict) and "image" in str(c.get("type") or ""):
+                            v.modalities.add("image")
                     if pl.get("role") == "user":
                         if is_injected_block(text):
                             # Visible, not dropped: the count is the record of
@@ -383,12 +819,20 @@ def parse_codex(path: Path) -> SessionView | None:
                             v.user_turns += 1
                             v.user_chars.append(len(text))
                             v.user_texts.append(text)
+                            _note_text_modality(v, text)
                     else:
                         v.assistant_turns += 1
                         if pl.get("stop_reason"):
                             v.last_stop_reason = pl["stop_reason"]
+                        if text.strip():
+                            if not v.first_assistant_msg:
+                                v.first_assistant_msg = text
+                            _note_text_modality(v, text)
                 elif pt in ("function_call", "local_shell_call", "custom_tool_call"):
                     v.tool_uses += 1
+                    _note_codex_tool_call(v, pl)
+                elif isinstance(pt, str) and pt.endswith("_output"):
+                    _note_codex_tool_output(v, pl)
     except OSError:
         return None
     if not saw_message:
@@ -714,6 +1158,136 @@ STAGES: list[Stage] = [
 DEDUP_REQUIRES = "dedup_threshold"
 
 
+def _sha256_file(path: Path) -> str:
+    """Hash a session file's raw bytes (the exact-duplicate key's body)."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _theme_hits(v: SessionView, keywords: list[str] | None) -> list[str]:
+    """Theme keywords hit over the same prose surface the L6 stage reads."""
+    if not keywords:
+        return []
+    hay = norm(" ".join(t[:500] for t in v.user_texts[:3]))
+    return [kw for kw in keywords if norm(kw) in hay]
+
+
+def run_collect(args: argparse.Namespace, header: list[str], rows: list[dict]) -> int:
+    """The collection posture (DESIGN.md § Collection and labeling).
+
+    Recall first, zero model tokens, no thresholds: the only drops are the two
+    unambiguous junk classes — structurally dead rows (both parsers refuse the
+    file) and exact duplicates (same agent + sha256 of the file's bytes). The
+    global policy is never read: `policy.json` is a delivery-posture standard,
+    and a collection run applies no quality gate at all. Everything else lands
+    in the pool with every annotation column, and once more as a row card.
+    """
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    theme_keywords: list[str] | None = None
+    if args.theme:
+        theme_path = (
+            Path(__file__).resolve().parent.parent / "themes" / f"{args.theme}.json"
+        )
+        if not theme_path.is_file():
+            available = ", ".join(
+                sorted(q.stem for q in theme_path.parent.glob("*.json"))
+            )
+            sys.exit(
+                f"no such theme: {args.theme} (looked for {theme_path})\n"
+                f"  available themes: {available or '(none)'}"
+            )
+        theme_keywords = load_theme(theme_path).get("topic_keywords") or []
+
+    pool: list[tuple[dict, SessionView]] = []
+    dropped: list[dict] = []
+    seen: dict[tuple[str, str], str] = {}  # (agent, sha256) -> kept session_file
+    for row in rows:
+        agent = row.get("agent", "")
+        raw = row["session_file"]
+        path = session_path(raw)
+        v = parse_session(path, agent)
+        if v is None:
+            dropped.append(
+                {"agent": agent, "session_file": raw, "reason": "unparseable", "detail": ""}
+            )
+            continue
+        digest = _sha256_file(path)
+        prior = seen.get((agent, digest))
+        if prior is not None:
+            dropped.append(
+                {
+                    "agent": agent,
+                    "session_file": raw,
+                    "reason": "exact_duplicate",
+                    "detail": prior,
+                }
+            )
+            continue
+        seen[(agent, digest)] = raw
+        pool.append((row, v))
+
+    columns = ENRICH_COLUMNS + ANNOTATION_COLUMNS
+    pool_path = outdir / "pool.tsv"
+    with pool_path.open("w", encoding="utf-8") as fh:
+        fh.write("\t".join(header + columns) + "\n")
+        for row, v in pool:
+            fh.write(
+                "\t".join(row.get(h, "") for h in header)
+                + "\t"
+                + "\t".join(_enrich_values(v))
+                + "\n"
+            )
+
+    cap = max(0, int(args.max_first_prompt_chars))
+    cards_path = outdir / "row-cards.jsonl"
+    with cards_path.open("w", encoding="utf-8") as fh:
+        for row, v in pool:
+            card = {
+                "source": row.get("session_file", ""),
+                "agent": row.get("agent", ""),
+                "first_prompt": v.first_user_msg[:cap],
+                "user_turns": v.user_turns,
+                "assistant_turns": v.assistant_turns,
+                "tool_uses": v.tool_uses,
+                "capabilities": v.capabilities,
+                "input_modalities": v.input_modalities,
+                "single_shot": v.single_shot,
+                "refusal_proxy": v.refusal_proxy,
+                "synthetic_wrapper": v.synthetic_wrapper,
+                "tool_calls_missing_results": v.tool_calls_missing_results,
+                "tool_error_streak_max": v.tool_error_streak_max,
+                "verification_commands": v.verification_commands,
+                "theme_hits": _theme_hits(v, theme_keywords),
+            }
+            fh.write(json.dumps(card, ensure_ascii=False) + "\n")
+
+    dropped_path = outdir / "dropped.tsv"
+    with dropped_path.open("w", encoding="utf-8") as fh:
+        fh.write("agent\tsession_file\treason\tdetail\n")
+        for d in dropped:
+            fh.write(
+                f"{d['agent']}\t{d['session_file']}\t{d['reason']}\t{d['detail']}\n"
+            )
+
+    by_reason: dict[str, int] = {}
+    for d in dropped:
+        by_reason[d["reason"]] = by_reason.get(d["reason"], 0) + 1
+    detail = ", ".join(f"{k} {n}" for k, n in sorted(by_reason.items())) or "none"
+    print(
+        f"collected {len(pool)} / {len(rows)} rows -> {pool_path}\n"
+        f"row cards: {len(pool)} -> {cards_path}\n"
+        f"dropped {len(dropped)} ({detail}) -> {dropped_path}\n"
+        "collection applies no thresholds and reads no policy.json: the only "
+        "drops are unparseable rows and exact duplicates"
+    )
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # enrich + run
 # ---------------------------------------------------------------------------
@@ -735,6 +1309,81 @@ def read_candidates(path: Path) -> tuple[list[str], list[dict]]:
         row = dict(zip(header, parts))
         rows.append(row)
     return header, rows
+
+
+ENRICH_COLUMNS: list[str] = [
+    "user_turns",
+    "injected_user_messages",
+    "assistant_turns",
+    "tool_uses",
+    "last_stop",
+    "first_msg_chars",
+    "thinking_blocks",
+    "signature_present",
+    "signature_empty",
+    "signature_ratio",
+    "signature_state",
+    "redacted_blocks",
+    # Names only, never matched text: an enriched TSV is pasted into
+    # issues and chat, and a column that leaked the secret it reports
+    # would make the disclosure itself the disclosure.
+    "credential_hit",
+    "credential_count",
+    "credential_kinds",
+]
+
+# SPEC item 27: annotation-grade columns, appended after the enrich columns.
+# Every value is mechanically derivable from the parse; none is a threshold
+# and none of them kills a row anywhere in the engine.
+ANNOTATION_COLUMNS: list[str] = [
+    "tool_calls_missing_results",
+    "tool_results_orphan",
+    "tool_repeat_max",
+    "tool_error_streak_max",
+    "verification_commands",
+    "refusal_proxy",
+    "synthetic_wrapper",
+    "single_shot",
+    "input_modalities",
+    "capabilities",
+    "tools_unmapped",
+    "replay_blockers",
+]
+
+
+def _enrich_values(v: SessionView | None) -> tuple[str, ...]:
+    """Stringify one view into the enrich + annotation column order."""
+    if v is None:
+        return ("",) * (len(ENRICH_COLUMNS) + len(ANNOTATION_COLUMNS))
+    return (
+        str(v.user_turns),
+        str(v.injected_user_messages),
+        str(v.assistant_turns),
+        str(v.tool_uses),
+        v.last_stop_reason,
+        str(len(v.first_user_msg)),
+        str(v.thinking_blocks),
+        str(v.signature_present),
+        str(v.signature_empty),
+        f"{v.signature_ratio:.2f}",
+        v.signature_state,
+        str(v.redacted_blocks),
+        str(v.credential_hit),
+        str(v.credential_count),
+        ",".join(v.credential_kinds),
+        str(v.tool_calls_missing_results),
+        str(v.tool_results_orphan),
+        str(v.tool_repeat_max),
+        str(v.tool_error_streak_max),
+        str(v.verification_commands),
+        str(v.refusal_proxy),
+        str(v.synthetic_wrapper),
+        str(v.single_shot),
+        v.input_modalities,
+        v.capabilities,
+        str(v.tools_unmapped),
+        v.replay_blockers,
+    )
 
 
 def fmt_int(n: int) -> str:
@@ -1235,6 +1884,26 @@ def main() -> int:
         "stopped by this",
     )
 
+    pc = sub.add_parser(
+        "collect",
+        help="collection posture: keep everything alive, annotate, emit "
+        "pool.tsv + row-cards.jsonl (no thresholds, policy.json not read)",
+    )
+    pc.add_argument("candidates")
+    pc.add_argument("outdir", help="directory for pool.tsv, row-cards.jsonl, dropped.tsv")
+    pc.add_argument(
+        "--theme",
+        help="name of a shipped theme: its keyword list becomes the row "
+        "cards' theme_hits (hits over the first 3 user messages). No "
+        "threshold from the theme is applied — collection has none",
+    )
+    pc.add_argument(
+        "--max-first-prompt-chars",
+        type=int,
+        default=2000,
+        help="row-card first_prompt truncation length (default 2000)",
+    )
+
     args = ap.parse_args()
     header, rows = read_candidates(Path(args.candidates))
 
@@ -1245,50 +1914,13 @@ def main() -> int:
         # `injected_user_messages` sits next to `user_turns` for the same
         # reason: the turn floor is read off this TSV, and a raw-block count
         # that was excluded has to be visible or the correction is invisible.
-        extra = [
-            "user_turns",
-            "injected_user_messages",
-            "assistant_turns",
-            "tool_uses",
-            "last_stop",
-            "first_msg_chars",
-            "thinking_blocks",
-            "signature_present",
-            "signature_empty",
-            "signature_ratio",
-            "signature_state",
-            "redacted_blocks",
-            # Names only, never matched text: an enriched TSV is pasted into
-            # issues and chat, and a column that leaked the secret it reports
-            # would make the disclosure itself the disclosure.
-            "credential_hit",
-            "credential_count",
-            "credential_kinds",
-        ]
+        # The annotation columns (SPEC item 27) ride the same output shape;
+        # `collect` writes exactly these too.
+        extra = ENRICH_COLUMNS + ANNOTATION_COLUMNS
         out = []
         for row in rows:
             v = parse_session(session_path(row["session_file"]), row.get("agent", ""))
-            vals = (
-                (
-                    str(v.user_turns),
-                    str(v.injected_user_messages),
-                    str(v.assistant_turns),
-                    str(v.tool_uses),
-                    v.last_stop_reason,
-                    str(len(v.first_user_msg)),
-                    str(v.thinking_blocks),
-                    str(v.signature_present),
-                    str(v.signature_empty),
-                    f"{v.signature_ratio:.2f}",
-                    v.signature_state,
-                    str(v.redacted_blocks),
-                    str(v.credential_hit),
-                    str(v.credential_count),
-                    ",".join(v.credential_kinds),
-                )
-                if v
-                else ("",) * len(extra)
-            )
+            vals = _enrich_values(v)
             out.append({**row, **dict(zip(extra, vals))})
         full_header = header + extra
         with open(args.out, "w", encoding="utf-8") as fh:
@@ -1296,6 +1928,9 @@ def main() -> int:
             fh.writelines("\t".join(r[h] for h in full_header) + "\n" for r in out)
         print(f"enriched {len(rows)} rows -> {args.out}")
         return 0
+
+    if args.cmd == "collect":
+        return run_collect(args, header, rows)
 
     # run
     # Four layers, merged per key, later wins: global policy -> theme override

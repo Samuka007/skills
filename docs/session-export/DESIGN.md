@@ -48,12 +48,17 @@ product, and it is stated in the skill's `compatibility` field.
 
 ## Directions and themes
 
-A **theme** is one thing we buy: role-play, translation, rewriting, generation,
-data analysis, multimodal — and `coding`, which reads the coding-signal word
-list as a positive topic. The core set is the reference bundle's own
-vocabulary. A theme file carries what makes the topic identifiable — its word
-list, its label, its provenance — and, where the theme must deviate from the
-shared standard, an `override` naming the policy keys it moves and why.
+The nocode direction buys four themes: role-play, 写作 (`writing`), 策划
+(`planning`), and 报告分析 (`report-analysis`). `writing` is the merged
+writing spectrum (the former generation and rewriting word lists); `planning`
+is new; `report-analysis` refocuses the former data-analysis word list toward
+reports. Theme ids stay ASCII; the zh labels carry the purchase names. The
+base skill additionally ships ad-hoc topics outside this direction —
+`translation`, `rewriting`, `multimodal` — plus `coding`, which reads the
+coding-signal word list as a positive topic. A theme file carries what makes
+the topic identifiable — its word list, its label, its provenance — and, where
+the theme must deviate from the shared standard, an `override` naming the
+policy keys it moves and why.
 
 A **direction** names a set of themes and, where the purchase constrains
 something, an `override` of its own — the noncode direction's `exclude_keywords`
@@ -62,15 +67,17 @@ override names a delta against the policy, never a bare number, and the runner
 refuses a direction file carrying policy keys rather than trusting it.
 
 ```
-session-export-nocode/direction.json     themes: [ … ], root override; no numbers
+session-export-nocode/direction.json     four themes + root override (the non-code exclusion list); no numbers
 ├── reads the base skill's scripts/policy.json   the shared quality standard
 └── and the base skill's themes/
-    ├── role-play.json        keywords, label, provenance, optional override
-    ├── translation.json      …
-    ├── rewriting.json        …
-    ├── generation.json       …
-    ├── data-analysis.json    …
-    └── multimodal.json       (report-only: counted, never selected)
+    ├── role-play.json        in the direction
+    ├── writing.json          in the direction (写作)
+    ├── planning.json         in the direction (策划)
+    ├── report-analysis.json  in the direction (报告分析)
+    ├── translation.json      shipped, ad-hoc only
+    ├── rewriting.json        shipped, ad-hoc only
+    ├── multimodal.json       shipped, ad-hoc only (no keywords: L6 OFF)
+    └── coding.json           shipped, ad-hoc only (coding signals as a positive topic)
 ```
 
 A session may satisfy several themes at once — the counts per theme sum to more
@@ -113,6 +120,42 @@ Those live in different homes on purpose:
 Restating a threshold in prose is how two sources of truth begin. When a
 document needs to say "at least five turns", it says "at least `min_user_turns`
 as the policy sets it", and the reader opens the policy file.
+
+## Collection and labeling: the two-stage split
+
+This family is the upstream half of a longer pipeline, and the two halves make
+opposite promises.
+
+**Upstream (this family) is the collector.** Zero model tokens, fully
+deterministic, recall first. The only kills are unambiguous junk — structurally
+dead rows and exact duplicates; every other signal is an annotation column,
+never a silent drop. It does not own precision. It owns making precision
+cheap: every candidate row ships with a **row card**, a self-contained preview
+(the first prompt, turn and tool counts, health and verification flags,
+matched themes) that a buyer's own model can judge in a few hundred tokens.
+Per-row purchasing means the buyer pays per row, so the collector's job is to
+move the precision judgment onto the cheapest possible surface — the row card
+— and to lose nothing that a row card could still sell.
+
+**Downstream (the labeler) is the precision layer.** Raw JSONL becomes ATIF
+labeling-view rows (structure facts are computed at conversion, and every
+truncation or fold is recorded as a trajectory-health blocker, never applied
+silently); one labeler call runs per row with the rubric injected; a code
+validator enforces the consistency rules before a label is accepted; labels
+are materialized with the model, prompt hash and token count. Labels are
+written once and read many — the LLM never sits on the selection's critical
+path. Pool derivation is a separate, versioned policy, exactly as the policy
+file is separate from the funnel here.
+
+The external Flywheel row-label standard (v1.2.4) states the same layering
+from the other side — controlled label vocabularies are explicitly "not a
+filtering policy", and pools are derived downstream — which is why the
+vocabulary can be adopted as our annotation columns without adopting its
+per-row LLM call.
+
+Collection versus delivery is a policy choice, not a mechanism change: the
+same stages annotate loosely for collection and kill tightly for delivery,
+and the cut lives in the policy and direction layers.
 
 ## What ships to a partner
 

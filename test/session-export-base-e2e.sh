@@ -65,10 +65,24 @@ mkcodex coding  '帮我重构这个模块并修复报错，翻译一下注释'
 # rather than being filed as "unparseable".
 mkcodex zeroturn '<environment_context><cwd>/x</cwd></environment_context>'
 
+# This suite tests the RUNNER contract, not the purchase. The shipped
+# direction's theme list is allowed to move (SPEC item 29 narrowed it to four,
+# dropping `translation`), and a fixture whose export depends on a theme that
+# is no longer bought would fail for a reason that says nothing about the
+# runner. So the tests run against the shipped direction with `translation`
+# and the report-only `multimodal` added: same root override, same schema
+# gate, plus the one-shot case this family exists to buy and the one
+# report-only theme the manifest contract is pinned against. Composed here,
+# from the shipped file, every run.
+TESTDIRJSON="$W/direction.json"
+jq --slurpfile d "$DIRJSON" -n \
+  '$d[0] | .themes = ([{theme: "translation"}, {theme: "multimodal"}] + .themes)' \
+  > "$TESTDIRJSON"
+
 run() { # outdir extra-args...
   local out="$1"; shift
   rm -rf "$out"
-  HOME="$H" bash "$RUNNER" --direction-file "$DIRJSON" -o "$out" "$@" 2>&1
+  HOME="$H" bash "$RUNNER" --direction-file "$TESTDIRJSON" -o "$out" "$@" 2>&1
 }
 
 echo "== the funnel decides, and it decides the same way twice =="
@@ -84,7 +98,7 @@ has "the coding session dies at the noncode stage" "$o1" "L7 noncode"
 # The expected row count is derived from the direction's theme entries rather
 # than written here, because a hard-coded count would fail the day a theme is
 # added — which would say nothing about the turn floor.
-selecting="$(jq -r --slurpfile d "$DIRJSON" -n \
+selecting="$(jq -r --slurpfile d "$TESTDIRJSON" -n \
   '$d[0].themes[] | .theme' | while read -r t; do
      [[ "$(jq -r '.report_only // false' "$SKILL/themes/$t.json")" == "true" ]] || echo "$t"
    done | wc -l | tr -d ' ')"
@@ -226,7 +240,7 @@ else
   # as consent would pass a redirect-based test and fail here.
   rm -rf "$W/prompt-no"
   tmux send-keys -t "$SESS" \
-    "HOME='$H' bash '$RUNNER' --direction-file '$DIRJSON' -o '$W/prompt-no'" Enter
+    "HOME='$H' bash '$RUNNER' --direction-file '$TESTDIRJSON' -o '$W/prompt-no'" Enter
   if wait_for 'export these'; then
     printf '  ok   %s\n' "the prompt is rendered on a terminal"; pass=$((pass + 1))
     prompt_line="$(tmux capture-pane -p -t "$SESS" | grep -o 'export these .* \[y/N\]' | sed -n 1p)"
@@ -247,7 +261,7 @@ else
   # batch — the one field that distinguishes it from the --yolo run above.
   rm -rf "$W/prompt-yes"
   tmux send-keys -t "$SESS" \
-    "HOME='$H' bash '$RUNNER' --direction-file '$DIRJSON' -o '$W/prompt-yes'" Enter
+    "HOME='$H' bash '$RUNNER' --direction-file '$TESTDIRJSON' -o '$W/prompt-yes'" Enter
   if wait_for 'export these'; then
     tmux send-keys -t "$SESS" "y" Enter
     if wait_for 'export-direction: done'; then

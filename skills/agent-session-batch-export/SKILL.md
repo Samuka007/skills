@@ -159,6 +159,25 @@ Two failures are actionable rather than fatal, and both belong to the user:
   written). Report the count and offer the explicit `--allow-credentials` re-run;
   never add that flag on your own initiative.
 
+## Collection (`funnel.py collect`) — the third posture
+
+Delivery filters; collection annotates. `collect CANDIDATES.tsv OUTDIR
+[--theme NAME] [--max-first-prompt-chars N]` is the upstream, recall-first
+posture described in [DESIGN.md § Collection and
+labeling](../../docs/session-export/DESIGN.md): zero model tokens, no
+thresholds, and the global policy is never read. The only drops are
+structurally dead rows (`unparseable`) and byte-identical files
+(`exact_duplicate`); everything else lands in `OUTDIR/pool.tsv` carrying the
+full enrich and annotation columns, plus one self-contained row card per row
+in `OUTDIR/row-cards.jsonl` (first prompt, counts, flags, theme hits — a few
+hundred tokens a buyer's own model can judge) and a `dropped.tsv` naming
+every drop with its reason. `--theme NAME` contributes keywords to
+`theme_hits` only — never thresholds. Do not screen, rank, or thin the pool:
+the precision judgment is the downstream labeler's, and this mode's promise
+is that nothing a row card could still sell is lost. The engine docstring and
+[FUNNEL.md § Collection mode](../../docs/agent-session-batch-export/FUNNEL.md)
+carry the column-by-column reference.
+
 ## Screening (stage 2)
 
 `scan` writes TWO files: `candidates.tsv` (7 columns, for reference) and

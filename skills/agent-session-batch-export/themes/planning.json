@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "theme",
+  "pack_id": "theme-planning",
+  "pack_version": "1.0.0",
+  "theme": "planning",
+  "label": {
+    "en": "planning",
+    "zh": "策划"
+  },
+  "keywords": [
+    "策划",
+    "策划案",
+    "活动策划",
+    "营销策划",
+    "企划",
+    "规划",
+    "计划书",
+    "商业计划",
+    "方案",
+    "proposal",
+    "plan"
+  ],
+  "_provenance": {
+    "keywords": "SPEC item 29: new purchase theme with no predecessor file — the 策划 (planning) buy. The word list is newly drafted; `plan` and `proposal` are matched inside user prose by the topic stage's substring test, so English compounds like `lesson plan` also hit"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "theme",
+  "pack_id": "theme-report-analysis",
+  "pack_version": "3.0.0",
+  "theme": "report-analysis",
+  "label": {
+    "en": "report analysis",
+    "zh": "报告分析"
+  },
+  "keywords": [
+    "数据分析",
+    "统计",
+    "图表",
+    "趋势",
+    "对比分析",
+    "拆解",
+    "指标",
+    "结论",
+    "analysis",
+    "statistics",
+    "报告",
+    "汇报",
+    "总结"
+  ],
+  "_provenance": {
+    "keywords": "SPEC item 29: the themes/data-analysis.json word list (kept verbatim, original order) extended with the report terms 报告/汇报/总结 — the theme refocuses from raw data analysis toward report-style analysis work. data-analysis is replaced by this file"
+  }
+}

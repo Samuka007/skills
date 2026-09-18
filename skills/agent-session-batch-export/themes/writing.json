@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "theme",
+  "pack_id": "theme-writing",
+  "pack_version": "3.0.0",
+  "theme": "writing",
+  "label": {
+    "en": "writing",
+    "zh": "写作"
+  },
+  "keywords": [
+    "撰写",
+    "生成",
+    "写一篇",
+    "写一段",
+    "起草",
+    "拟写",
+    "大纲",
+    "细纲",
+    "章",
+    "ppt",
+    "报告",
+    "汇报",
+    "方案",
+    "总结",
+    "润色",
+    "改写",
+    "重写",
+    "修改",
+    "优化措辞",
+    "调整语气",
+    "polish",
+    "rewrite",
+    "paraphrase"
+  ],
+  "_provenance": {
+    "keywords": "SPEC item 29: the union of the retired themes/generation.json list and the themes/rewriting.json list, deduplicated in first-seen order. The two prose-production themes converge into one purchase theme; generation is replaced by this file, rewriting stays shipped as an ad-hoc theme outside the direction"
+  }
+}

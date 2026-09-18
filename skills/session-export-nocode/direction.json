@@ -32,14 +32,13 @@
     ]
   },
   "themes": [
-    { "theme": "translation" },
-    { "theme": "rewriting" },
-    { "theme": "generation" },
     { "theme": "role-play" },
-    { "theme": "data-analysis" },
-    { "theme": "multimodal" }
+    { "theme": "writing" },
+    { "theme": "planning" },
+    { "theme": "report-analysis" }
   ],
   "_provenance": {
+    "themes": "SPEC item 29: the purchase narrows from six prose themes to four. `writing` merges the former generation and rewriting word lists; `report-analysis` refocuses the former data-analysis list toward reports; `planning` is new; role-play unchanged. `translation`, `rewriting` and `multimodal` remain shipped as ad-hoc themes but leave the direction",
     "override.exclude_keywords": "DECISION: 'mainly not code' is a negative property, so coding signals are what disqualify. Shared by every theme in this family — held here, at the direction layer, so the word list is stated once and every theme run judges with the same one"
   }
 }

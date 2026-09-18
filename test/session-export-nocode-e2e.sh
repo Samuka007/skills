@@ -120,16 +120,14 @@ has "documents the canonical screen file" "$(cat "$SKILL/SKILL.md")" "screen.tsv
 has "documents the canonical decision file" "$(cat "$SKILL/SKILL.md")" "decisions.tsv"
 
 echo
-echo "== direction.json has exactly the six themes and no copied policy =="
+echo "== direction.json has exactly the four themes and no copied policy =="
 expected_themes="$WORK/expected-themes"
 actual_themes="$WORK/actual-themes"
 cat > "$expected_themes" <<'THEMES'
-translation
-rewriting
-generation
 role-play
-data-analysis
-multimodal
+writing
+planning
+report-analysis
 THEMES
 awk '
   /"themes"[[:space:]]*:/ { inside = 1; next }
@@ -147,9 +145,9 @@ awk '
   }
 ' "$SKILL/direction.json" > "$actual_themes"
 if cmp -s "$expected_themes" "$actual_themes"; then
-  ok "direction theme list is exactly six names in order"
+  ok "direction theme list is exactly four names in order (SPEC item 29)"
 else
-  no "direction theme list differs from the six-name contract"
+  no "direction theme list differs from the four-name contract"
 fi
 if contains_file "$SKILL/direction.json" '"schema_version": 2'; then
   ok "direction is schema_version 2"

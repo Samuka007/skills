@@ -24,11 +24,11 @@ launcher. It is the direction's single metadata file. Its `themes` array
 declares exactly these themes, each resolved by name against the base skill's
 `themes/`:
 
-`translation`, `rewriting`, `generation`, `role-play`, `data-analysis`,
-`multimodal`.
+`role-play` (角色扮演), `writing` (写作), `planning` (策划),
+`report-analysis` (报告分析).
 
 Each entry is a `{ "theme": NAME }` object with an optional per-theme
-`override`; the six shipped entries are plain names. What the purchase
+`override`; the four shipped entries are plain names. What the purchase
 constrains lives in the direction's root `override`: it supplies the
 `exclude_keywords` word list — the coding-signal terms whose absence defines
 "non-code". The direction carries no thresholds; the shared quality standard

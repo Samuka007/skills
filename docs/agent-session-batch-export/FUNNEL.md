@@ -160,6 +160,81 @@ The policy also carries two keys no funnel stage consumes —
 recorded but unenforced, rather than applying them silently; a stage that
 starts consuming one moves it out of that note in the same change.
 
+## Collection mode (`collect`)
+
+`run` is a delivery posture: it kills. `collect` is the upstream half of the
+two-stage split ([DESIGN.md § Collection and
+labeling](../session-export/DESIGN.md)): recall first, zero model tokens,
+and the only drops are the two unambiguous junk classes. Everything else
+survives carrying its measurements.
+
+```bash
+python3 scripts/funnel.py collect CANDIDATES.tsv OUTDIR [--theme NAME] \
+  [--max-first-prompt-chars N]
+```
+
+What it writes:
+
+| File | Content |
+|---|---|
+| `OUTDIR/pool.tsv` | every kept row with the candidates columns plus **all** enrich and annotation columns |
+| `OUTDIR/row-cards.jsonl` | one JSON row card per pool row (see below) |
+| `OUTDIR/dropped.tsv` | each drop with `agent`, `session_file`, `reason`, `detail` |
+
+The two drop classes, and nothing else:
+
+- `unparseable` — both format adapters refuse the file (structurally dead
+  rows: neither claude_code nor codex, or a file the OS cannot read).
+- `exact_duplicate` — same `agent` and the same sha256 of the file's bytes;
+  `detail` names the kept original.
+
+`collect` reads **no** `policy.json` — the policy is a delivery-posture
+standard, and collection applies no quality gate. No stage runs, nothing is
+killed for turn counts, tool ratios, topic, or dedup: a zero-turn session
+lands in the pool with `user_turns=0` visible in its row. `--theme NAME` does
+not import the theme's thresholds; it only fills each card's `theme_hits`
+with that theme's keywords hit over the same prose surface the L6 topic stage
+reads (the first three user messages).
+
+### The annotation columns
+
+`enrich` (and every `pool.tsv`) appends these after the shipped enrich
+columns. Each is mechanically derivable from the raw JSONL parse — no model,
+no threshold, no kill anywhere in the engine:
+
+| Column | Meaning |
+|---|---|
+| `tool_calls_missing_results` | tool calls with no paired result in the file |
+| `tool_results_orphan` | results with no paired call |
+| `tool_repeat_max` | most repeats of one (tool name, arguments digest) |
+| `tool_error_streak_max` | longest run of consecutive failed tool results (claude `tool_result.is_error`; codex outputs opening with `error`, or a JSON envelope with a nonzero `metadata.exit_code`) |
+| `verification_commands` | tool calls whose command text hits a test/verify pattern (pytest, cargo test, npm test, go test, make, tsc, lint, ruff, mypy, flake8 — the table lives at the top of `funnel.py`) |
+| `refusal_proxy` | 1 when the first assistant message opens refusal-shaped (我不能 / I cannot / … — pattern table in the file) |
+| `synthetic_wrapper` | 1 when the first real user message starts with a known packaging prefix ("The following is the Codex agent history", "Treat the transcript") |
+| `single_shot` | 1 when the session is exactly one real user turn |
+| `input_modalities` | comma subset of `text,code,image,document` observed in message content (a fenced code block marks `code`) |
+| `capabilities` | distinct capability ids from the static tool-name map (`capability.code_execution`, `filesystem_read`, `web_search`, …) |
+| `tools_unmapped` | distinct tool names the map does not know — how a new tool surfaces |
+| `replay_blockers` | why a faithful replay would diverge: `missing_tool_results`, `truncated_output` (an explicit truncation marker in a tool output, or a claude session whose last assistant record carries no stop_reason), `external_service` (a live network capability) |
+
+### Row cards
+
+One self-contained JSON object per pool row — the cheapest surface a buyer's
+own model can judge in a few hundred tokens:
+
+```json
+{"source": "...jsonl", "agent": "codex", "first_prompt": "…≤N chars…",
+ "user_turns": 11, "assistant_turns": 28, "tool_uses": 75,
+ "capabilities": "capability.code_execution", "input_modalities": "text,code",
+ "single_shot": 0, "refusal_proxy": 0, "synthetic_wrapper": 0,
+ "tool_calls_missing_results": 0, "tool_error_streak_max": 0,
+ "verification_commands": 0, "theme_hits": ["翻译"]}
+```
+
+`first_prompt` truncates to `--max-first-prompt-chars` (default 2000); the
+card intentionally carries the flags and counts, not the annotations' full
+detail — the pool row beside it has everything.
+
 ## Quickstart
 
 ```bash
@@ -199,8 +274,9 @@ python3 "$F" run "$OUT/candidates.tsv" "$OUT/.unused" --theme translation \
   --exclude-keywords "重构,调试,编译"
 ```
 
-Subcommands: `run` (filter) and `enrich` (add computed columns — turns, tool
-counts, last stop reason, chars, signature state — without filtering).
+Subcommands: `run` (filter), `enrich` (add computed columns — turns, tool
+counts, last stop reason, chars, signature state, the annotation columns —
+without filtering), and `collect` (the collection posture above).
 
 ## Demo
 
