@@ -1294,7 +1294,20 @@ def run_collect(args: argparse.Namespace, header: list[str], rows: list[dict]) -
 
 
 def read_candidates(path: Path) -> tuple[list[str], list[dict]]:
-    lines = path.read_text(encoding="utf-8").splitlines()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError as e:
+        # Fail loud with the cause, not a bare traceback. The historical source
+        # of these bytes is curate-sessions.sh truncating the first_prompt
+        # preview with `cut -c`, which is byte-based and splits CJK characters
+        # at the byte boundary. Old candidates.tsv files are regenerable — the
+        # fix is to re-run the scan with the current scripts, so say that.
+        sys.exit(
+            f"candidates file is not valid UTF-8 ({e}). It was almost certainly "
+            "written by an old curate-sessions.sh that byte-truncated the "
+            "first_prompt preview; re-run the scan with the current scripts to "
+            "regenerate it."
+        )
     if not lines:
         sys.exit("candidates file is empty")
     header = lines[0].split("\t")

@@ -263,6 +263,11 @@ prose() { # $1=agent $2=file
 
 # first real user prompt (skips tool_results / system scaffolding), flattened
 # to one line so it cannot break the TSV.
+# The preview is truncated with jq, not `cut -c`: cut counts bytes in GNU and
+# MSYS coreutils, so a CJK prompt sliced at byte 180 can split a character and
+# write invalid UTF-8 into candidates.tsv — which kills the funnel's strict
+# UTF-8 reader (UnicodeDecodeError) one stage later. jq slices by character
+# and is already a dependency of this very pipeline.
 first_prompt() { # $1=agent $2=file
   case "$1" in
     claude)
@@ -284,7 +289,7 @@ first_prompt() { # $1=agent $2=file
     $0 ~ /<user_instructions>/                             { next }
     $0 ~ /<permissions/                                    { next }
     length($0) > 3 { print; exit }' \
-       | tr '\t\r\n' '   ' | sed 's/  */ /g' | cut -c1-180
+       | tr '\t\r\n' '   ' | sed 's/  */ /g' | jq -Rr '.[0:180]' | tr -d '\r'
 }
 
 cwd_of() { # $1=agent $2=file
