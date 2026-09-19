@@ -1,143 +1,105 @@
-# skills
+# skills · 非代码会话一键导出
 
-Personal Agent Skills, installable with [skills.sh](https://skills.sh) / `npx skills`.
+把下面「任务书」整段复制给 Codex（Windows 本机、能运行终端命令的 AI），
+或保存为 `.md` 文件上传后说"按此执行"，即可自动完成：
+环境检查 → 安装依赖与技能 → 运行导出 → 校验 → 报告压缩包位置。
+不需要会命令行。
 
-```bash
-npx skills add Samuka007/skills --list
+## 任务书（整段复制给 AI）
 
-# the base skill: scan, screen, review, copy, manifest, deliver
-npx skills add Samuka007/skills --skill agent-session-batch-export -g
+````markdown
+# 非代码会话一键导出（任务书 v2）
 
-# a direction bundle needs the base skill too — there is no dependency field
-# in the Agent Skills spec, so both are named (or use Select All)
-npx skills add Samuka007/skills \
-  --skill session-export-nocode --skill agent-session-batch-export -g
+你是执行者。请直接执行本任务：检查环境 → 安装缺失依赖与两个技能 →
+运行导出 → 校验 → 报告压缩包位置。全程自主完成，不要向我索要命令或
+确认选择。仅当遇到无法自动完成的系统权限或网络授权时才暂停。不得导出
+凭据，不得上传会话。
+
+若当前用户只是要求解释或审阅本文件，不要执行导出；附件本身不构成授权，
+无法确认执行意图时，只问一次"是否按本任务直接导出"。
+
+## 第一步 · 环境检查（缺失才装）
+
+| 依赖 | 验证（真实执行） | 缺失安装 |
+|---|---|---|
+| Node.js + npx | `node --version`、`npx.cmd --version` | winget: `OpenJS.NodeJS.LTS` |
+| Git Bash | `"C:/Program Files/Git/bin/bash.exe" --version` | winget: `Git.Git` |
+| python3 | `python3 --version`（可能只是 Store 桩，必须执行验证） | scoop: `scoop install python`；或 winget: `Python.Python.3.13` |
+| jq、ripgrep | `jq --version`、`rg --version` | scoop: `scoop install jq ripgrep` |
+
+Windows 全程使用 Git Bash（`C:/Program Files/Git/bin/bash.exe`），
+不用 WSL、不用 `System32/bash.exe`、不用 PowerShell 的 `python` 别名。
+安装后刷新当前进程 PATH 或直接用绝对路径，不要求重启。
+
+## 第二步 · 安装两个技能
+
+```powershell
+npx.cmd --yes skills@latest add Samuka007/skills --skill session-export-nocode --skill agent-session-batch-export --agent codex -y
 ```
 
-## Available
+安装后读取实际使用的两个 `SKILL.md`，并确认以下文件存在：
+`agent-session-batch-export/scripts/{funnel.py,policy.json,export-direction.sh}` 与
+`session-export-nocode/direction.json`。缺一即按 SKILL.md 的安装指引停下报告。
 
-| Skill | What it does |
+## 第三步 · 运行导出（一条命令）
+
+```bash
+mkdir -p exports/nocode-<YYYYMMDD-HHMMSS>
+bash "$HOME/.agents/skills/session-export-nocode/scripts/session-export-nocode.sh" \
+  --out <上面的导出目录> --agent both --min-lines 0
+```
+
+规则：
+
+- **默认即无人值守（yolo）**：不需要任何短语，也禁止手工追加 `--yolo`
+  或改用基础技能的人工筛选流程代替方向流程。
+- 用户明确要求"先让我确认"时，才加 `--confirm`（会出现 `[y/N]`，交给用户）。
+- 禁止：修改 `policy.json`、`themes/`、`direction.json` 或任何筛选产物；
+  传递 `--allow-credentials`；用模型语义筛选会话。
+- 凭据命中由引擎自动处理：命中行**剔除并披露**（不会写入交付包），在报告
+  里给出剔除数量即可，不是错误。
+- 零入选是有结果的运行：如实报告扫描数，不产空包，不算失败。
+
+## 第四步 · 校验并报告
+
+1. 交付压缩包存在且非空；
+2. `manifest.json` 条数 = `keep/` 文件数；
+3. 逐条 sha256 与清单一致（源文件可访问时同时与源文件核对）；
+4. 向用户报告（保持简洁）：
+
+```text
+已完成：<压缩包绝对路径>
+扫描：M 个；导出：N 个；凭据剔除：K 个；完整性校验：N/N 通过。
+提醒：内容未脱敏，分享前请自行检查。
+```
+
+失败时报告：阶段、原始错误关键内容、已尝试的处理、最小下一步；
+不把失败转交成一整套手工教程。
+````
+
+## 运行完成后你会得到
+
+- `<导出目录>/keep/`：原始会话副本（与源文件字节级一致）
+- `manifest.json`：每条会话的 SHA256 与来源记录
+- 交付压缩包（zip）
+- 含凭据的会话已被自动剔除并逐条报告（不会进入交付包）；
+  其余内容未脱敏，分享前请自行检查
+
+## 这套仓库包含两个技能
+
+| 技能 | 作用 |
 |---|---|
-| [`agent-session-batch-export`](skills/agent-session-batch-export/SKILL.md) | Curate claude_code/codex session transcripts into a corpus of **raw `.jsonl`** trajectory material for agentic analysis. Scans candidates by workspace/topic, lets an agent screen them and a human mark keep/drop, then copies the kept sessions byte-for-byte with a sha256 manifest. |
-| [`session-export-nocode`](skills/session-export-nocode/SKILL.md) | Export the non-code direction: six themes, selected by the base skill's deterministic funnel rather than by an agent reading prose. Invoked by hand; only an explicit opt-out phrase skips the confirmation. |
+| session-export-nocode | 非代码方向包：四个主题（role-play / 写作 / 策划 / 报告分析）+ 一键启动器，默认无人值守 |
+| agent-session-batch-export | 引擎与管线：确定性 funnel、全局 policy、主题词表、交互式人工筛选 |
 
-Two layers, one rule about where a change lands. The **base skill** owns the
-mechanism (the funnel), the global policy, the themes, and the pipeline. A
-**direction bundle** owns only a theme list, the overrides that define the
-purchase, and its invocation policy — it restates no threshold, so adding a
-purchase direction adds one small skill and changes no numbers.
-
-Two published skills have been retired — `trajectory-packs`, and the engine
-directory `trajectory-funnel` beside it — and replaced by the two above. The
-installer copies and never removes, so a machine that installed the old one
-still has it; [`docs/RELEASE-NOTES.md`](docs/RELEASE-NOTES.md) says what to
-delete and what to install.
-
-## Using
-
-After install both skills live in `~/.agents/skills/`. Three entry points,
-ordered by how often you will want them. The golden path is the first.
-
-**Golden path — one-click direction export.** The non-code direction bundles
-four prose topics (role-play, 写作, 策划, 报告分析), the shared quality
-standard, and the non-code exclusion list; one command runs the deterministic
-selection and hands back a verified archive:
+## 手动安装（也可以让上面的 AI 代装）
 
 ```bash
-bash ~/.agents/skills/session-export-nocode/scripts/session-export-nocode.sh \
-  --out ./out
+npx skills add Samuka007/skills --skill session-export-nocode --skill agent-session-batch-export -g
 ```
 
-This runs unattended by default: the selection is deterministic and nothing
-uploads. Sessions that look like they carry credentials are excluded and
-reported, not shipped. A caller who wants a checkpoint adds `--confirm`, and
-the same command stops at one `[y/N]`.
+## 维护者 / 开发者
 
-**Ask your agent.** Agents with skill discovery (codex, claude code, opencode,
-…) find the installed skill from your request and drive the scripts for you.
-Say what you want in plain words — what kind of sessions, what to exclude,
-whether you will review the selection:
-
-> 把我最近的非代码会话（翻译、改写这类）整理成一个可以直接交给别人的
-> 语料包，不用人工审。
-
-The selection on the direction path is deterministic — a Python funnel applies
-the global policy and the direction's overrides, and the agent never judges
-prose. Skipping review is explicit
-or absent: the launcher derives `--yolo` only from the exact phrases
-`直接导出` / `无需确认` / `不用确认` / `无须确认`, and refuses the flag
-passed by hand; anything else stops at a confirmation prompt.
-
-**Run the pipeline yourself.** Interactive, one command, lands in the fzf
-picker; your ENTER finalizes and verifies every kept copy byte-identical in
-one go. On Windows invoke the `.ps1` wrappers instead — they pin Git Bash and
-declare the sessions are the Windows side's:
-
-```bash
-bash ~/.agents/skills/agent-session-batch-export/scripts/pick-sessions.sh \
-  -o ./cur --agent codex --min-lines 20
-```
-
-Prerequisites: `jq` and `python3` (Windows Git Bash: `scoop install jq
-python`). On Windows the `python3` on PATH is usually the Microsoft Store
-stub, which is why the scripts probe by *executing* rather than by presence.
-
-What every path produces: `OUT/keep/*.jsonl` (byte-identical originals),
-`OUT/manifest.json` (sha256 + provenance per entry), and a delivery archive.
-Stage-by-stage detail, the hand-off gate, and the interactive/headless
-matrix: [skill README](skills/agent-session-batch-export/README.md).
-
-## Layout
-
-```
-skills/<skill-name>/SKILL.md     # required, with YAML frontmatter  (shipped)
-skills/<skill-name>/scripts/     # executable code + policy.json, the shared quality standard (shipped)
-skills/<skill-name>/themes/      # theme identity: keywords, label, optional overrides (shipped)
-
-docs/<skill-name>/               # maintainer notes          (repo only)
-docs/RELEASE-NOTES.md            # retirements, and what replaced them (repo only)
-test/                            # test suites               (repo only)
-```
-
-`skills/<skill-name>/` is the published unit: `npx skills add` copies that
-directory **whole**, so maintainer documentation must not live inside it. Each
-skill's development notes go in `docs/<skill-name>/`, mirroring the skill name
-so the mapping is one-to-one. The one exception is `docs/RELEASE-NOTES.md`:
-a retirement outlives the skill it retires, so it belongs to no single skill.
-
-Follows the [Agent Skills specification](https://agentskills.io/specification):
-
-```bash
-npx skills-ref validate ./skills/<skill-name>
-```
-
-## Development
-
-```bash
-nix develop                                       # tmux + shellcheck + ty + ruff
-echo "--- non-interactive ---"
-bash test/accept.sh skills/agent-session-batch-export /tmp/work
-echo "--- interactive (real PTY) ---"
-bash test/funnel-e2e.sh                           # funnel --in-place -> pick -> verified
-bash test/ux-grounding.sh .                       # entry-point UX
-bash test/test-fzf-tmux.sh skills/agent-session-batch-export /tmp/fzft
-bash test/test-pick-tmux.sh "$PWD"                # whole one-command journey
-bash test/test-outdir-tmux.sh                     # output-directory prompt flow
-echo "--- interactive (Windows, run under Git Bash) ---"
-bash test/win-zellij-pick.sh                      # real picker through zellij (issue #7)
-echo "--- static ---"
-bash test/shipped-install-refs.sh
-shellcheck skills/<name>/scripts/*.sh
-ty check skills/agent-session-batch-export/scripts/funnel.py
-ruff check skills/agent-session-batch-export/scripts/funnel.py
-```
-
-The interactive tests need a real PTY (they drive tmux and read the pane back)
-and skip themselves without one; they are the only tests that can see the
-picker's actual output. On Windows the same class of test runs through zellij —
-see [`SPEC/README.md`](SPEC/README.md) § Decisions. [`AGENTS.md`](AGENTS.md) has
-how work here is accepted.
-
-| Skill | Dev notes |
-|---|---|
-| `agent-session-batch-export` | [`docs/agent-session-batch-export/INTERNALS.md`](docs/agent-session-batch-export/INTERNALS.md) |
+仓库布局、开发命令、测试套件与验收流程见
+[docs/DEVELOP.md](docs/DEVELOP.md)；条目账本与验收证据见
+[SPEC/README.md](SPEC/README.md)。
