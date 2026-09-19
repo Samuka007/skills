@@ -31,13 +31,16 @@ Windows 全程使用 Git Bash（`C:/Program Files/Git/bin/bash.exe`），
 不用 WSL、不用 `System32/bash.exe`、不用 PowerShell 的 `python` 别名。
 安装后刷新当前进程 PATH 或直接用绝对路径，不要求重启。
 
-## 第二步 · 安装两个技能
+## 第二步 · 安装两个技能（总是重装最新版）
 
 ```powershell
-npx.cmd --yes skills@latest add Samuka007/skills --skill session-export-nocode --skill agent-session-batch-export --agent codex -y
+npx.cmd --yes skills@latest add Samuka007/skills --skill session-export-nocode --skill agent-session-batch-export -g -y
 ```
 
-安装后读取实际使用的两个 `SKILL.md`，并确认以下文件存在：
+**无论之前是否装过，都必须重新执行这条命令**：安装器总是拉取仓库最新版
+并整体覆盖本地副本，而技能本身不会自动更新——跳过重装就会一直运行旧版。
+`-g` 装到 `~/.agents/skills/`，与下一步的启动器路径一致。安装完成后读取
+实际使用的两个 `SKILL.md`，并确认以下文件存在：
 `agent-session-batch-export/scripts/{funnel.py,policy.json,export-direction.sh}` 与
 `session-export-nocode/direction.json`。缺一即按 SKILL.md 的安装指引停下报告。
 
