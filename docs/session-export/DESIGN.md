@@ -145,7 +145,12 @@ validator enforces the consistency rules before a label is accepted; labels
 are materialized with the model, prompt hash and token count. Labels are
 written once and read many — the LLM never sits on the selection's critical
 path. Pool derivation is a separate, versioned policy, exactly as the policy
-file is separate from the funnel here.
+file is separate from the funnel here. **The labeler lives outside this
+repository**: this family's contract ends at the row card and the byte-
+identical raw JSONL — everything the ATIF conversion consumes is already in
+the shipped files, and the conversion itself is the downstream project's
+ingestion adapter (the funnel's format adapters are its reference
+implementation).
 
 The external Flywheel row-label standard (v1.2.4) states the same layering
 from the other side — controlled label vocabularies are explicitly "not a
