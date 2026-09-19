@@ -60,12 +60,15 @@ Stages (fixed order):
                    when the merged policy supplies exclude_keywords.
   L8 credential -- credential shapes over the COMPLETE raw JSONL, not merely
                    user prose: a key can sit in tool output or an assistant
-                   message. It ANNOTATES and never drops a row, because
-                   silently exporting the rest of a batch would hide the
-                   finding; --credential-hard-gate turns any surviving hit into
-                   a whole-batch refusal (exit 3). This is a determinism and
-                   disclosure stage, NOT a security boundary: an agent that
-                   rewrites its own artifacts is not stopped by it.
+                   message. It ANNOTATES and never drops a row: disposition is
+                   a caller decision, made where the flags live. The direction
+                   driver's default excludes hits loudly (per-file disclosure
+                   plus a manifest record), --allow-credentials exports them,
+                   and --credential-hard-gate refuses the whole batch (exit 3)
+                   for the "any dirty, no output" posture. This is a
+                   determinism and disclosure stage, NOT a security boundary:
+                   an agent that rewrites its own artifacts is not stopped by
+                   it.
   L9 dedup      -- near-duplicate cluster collapse via 5-gram Jaccard over
                    first user messages. Keeps the longest of each cluster. OFF
                    (its row still printed) when the policy supplies no
@@ -1040,11 +1043,12 @@ def stage_noncode(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]
 def stage_credential(row: dict, v: SessionView, p: dict) -> tuple[StageStatus, str]:
     """Credential disclosure (L8) — annotate, never drop.
 
-    A hit does NOT kill the row. Dropping it would export the rest of the batch
-    while hiding that the partner's history carries their own keys, and the
-    caller could not tell a clean batch from a filtered one. So the stage passes
-    and records; `--credential-hard-gate` turns any surviving hit into a
-    whole-batch refusal at the end of the run.
+    A hit does NOT kill the row: disposition belongs to the caller, where the
+    flags are. The direction driver's default excludes hits from the delivery
+    with a per-file disclosure and a manifest record — the finding is loud, so
+    a clean batch is distinguishable from a filtered one — and
+    `--credential-hard-gate` turns any surviving hit into a whole-batch
+    refusal instead.
 
     This is determinism and disclosure, not security. An agent that edits its
     own artifacts is not stopped here, and no wording in this file should imply
@@ -1890,11 +1894,12 @@ def main() -> int:
         "--credential-hard-gate",
         action="store_true",
         help="exit 3 when any SURVIVING session carries a credential shape, "
-        "before anything is written. The whole batch is refused rather than "
-        "quietly filtered: exporting the remainder would hide that the "
-        "partner's own keys are in their history. Determinism and disclosure, "
-        "not security — an agent that rewrites its own artifacts is not "
-        "stopped by this",
+        "before anything is written. For the 'any dirty, no output' posture: "
+        "the direction driver's default disposition already excludes hits "
+        "loudly (per-file disclosure plus a manifest record), which answers "
+        "the old objection that exporting the remainder would hide the "
+        "finding. Determinism and disclosure, not security — an agent that "
+        "rewrites its own artifacts is not stopped by this",
     )
 
     pc = sub.add_parser(

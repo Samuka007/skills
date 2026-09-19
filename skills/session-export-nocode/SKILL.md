@@ -35,14 +35,17 @@ constrains lives in the direction's root `override`: it supplies the
 is the base skill's `scripts/policy.json`, and no file in this skill restates
 it.
 
-Pass the user's complete request as one `--request` argument. Choose an output
-directory, then run:
+Choose an output directory, then run:
 
 ```bash
 bash scripts/session-export-nocode.sh \
-  --request "$FULL_USER_REQUEST" \
   --out "$OUT_DIR"
 ```
+
+`--out` is required. `--request "$FULL_USER_REQUEST"` is still accepted for
+backward compatibility with earlier callers, but it is used by no gate and
+forwarded nowhere: the launcher's behavior no longer depends on the wording
+of the request.
 
 Forward the scan options when the user supplied them:
 `--allow-credentials`, `--agent`, `--workspace`, `--since`, and `--min-lines`.
@@ -61,23 +64,28 @@ any of those stages here.
 
 ## Review policy
 
-Append `--yolo` **only** when the user's own request contains one of these exact
-phrases:
+**The default is unattended.** The launcher always calls the base runner with
+`--yolo`: the deterministic funnel decides the selection, no batch-level
+prompt appears, and the manifest records `batch_confirmed=false`. There is no
+phrase gate any more — it used to derive `--yolo` from the phrases `直接导出`,
+`无需确认`, `不用确认`, `无须确认`, and omit the flag for every other request;
+whether the request says `直接导出` or `帮我导出` now makes no difference on
+this path.
 
-- `直接导出`
-- `无需确认`
-- `不用确认`
-- `无须确认`
+When the user's request explicitly asks to be asked first — 先确认, 让我审一遍,
+需要我确认 and the like — pass `--confirm`: the launcher then omits `--yolo`,
+and the base runner prints one batch-level `[y/N]`. Answering `y` delivers
+with `batch_confirmed=true`; EOF or any other answer exports nothing. This is
+a batch-level checkpoint only: there is still no row-by-row screening step on
+this path and no decision surface to fill.
 
-The phrase may occur in a longer request, but it must be one of those exact
-sequences. Do not infer an opt-out from brevity, silence, or wording such as
-`帮我导出`; do not pass `--yolo` for any other request. Without a listed phrase,
-omit `--yolo` and leave the base runner's confirmation path intact.
-
-Do not edit funnel output or any `candidates.tsv`, `screen.tsv`, or
-`decisions.tsv` file. The funnel report may be inspected only for a catastrophic
-run problem; it is not a decision surface and must not be rewritten. Never
-choose keep/drop rows or create a second screening engine.
+History, for explaining an older installation: the retired gate matched only
+the four exact phrases above, and matched them anywhere in a longer request;
+brevity, silence, or `帮我导出` kept the prompt. Do not edit funnel output or
+any `candidates.tsv`, `screen.tsv`, or `decisions.tsv` file. The funnel report
+may be inspected only for a catastrophic run problem; it is not a decision
+surface and must not be rewritten. Never choose keep/drop rows or create a
+second screening engine.
 
 ## Actionable failures
 
@@ -86,7 +94,11 @@ on Windows, show its `winget install Python.Python.3.13` hint and ask the user
 whether to install it and retry. Never replace deterministic funnel screening
 with semantic model screening.
 
-If the runner refuses because credential-like content was found, tell the user
-the reported count and offer the explicit `--allow-credentials` rerun. Do not
-add that flag silently. If the base skill itself is missing, show the launcher's
-install instruction and ask the user to install the two skills together.
+By default the runner EXCLUDES credential-bearing sessions from the delivery
+(they are never written) and reports each exclusion — the source and the
+credential kinds — plus the total; relay that list to the user. The remaining
+sessions deliver normally, and the exclusions are recorded in the manifest.
+`--allow-credentials` includes them instead: that is an explicit human
+decision, so offer it and never add it silently. If the base skill itself is
+missing, show the launcher's install instruction and ask the user to install
+the two skills together.

@@ -154,26 +154,38 @@ chk "and the policy digest matches the shipped file" \
   "$(jq -r '.[0].policy.sha256' "$W/r1/manifest.json")"
 
 echo
-echo "== credentials refuse the batch, and only an explicit flag proceeds =="
+echo "== credentials are excluded and disclosed by default; refusal is a flag =="
 mkcodex leak '翻译这段文本 sk-ant-abcdefghij0123456789'
-o3="$(run "$W/cred" --yolo)"; chk "a credential hit refuses" "3" "$?"
-has "the refusal says so" "$o3" "refusing the batch"
-has "and names the flag that overrides it" "$o3" "--allow-credentials"
-# Nothing may be left behind: a half-written directory would let a caller
-# mistake a refusal for a delivery.
-chk "and writes nothing at all" "absent" \
-  "$(test -e "$W/cred" && echo present || echo absent)"
+o3="$(run "$W/cred" --yolo)"; chk "a credential hit does not stop the delivery" "0" "$?"
+has "the exclusion is disclosed per file" "$o3" "excluded: "
+has "with the credential kind" "$o3" "[anthropic_key]"
+has "and the count is summarized" "$o3" "credential exclusions: 1 session(s) excluded"
+chk "the clean one-shot still delivers" "1" "$(jq 'length' "$W/cred/manifest.json")"
+chk "the manifest records the exclusion" "1" \
+  "$(jq -r '.[0].credential_excluded' "$W/cred/manifest.json")"
+has "and names the excluded source" \
+  "$(jq -r '.[0].credential_exclusions[0].source' "$W/cred/manifest.json")" "rollout-leak.jsonl"
+chk "under one vendor name" "anthropic_key" \
+  "$(jq -r '.[0].credential_exclusions[0].kinds[0]' "$W/cred/manifest.json")"
+chk "the excluded row is absent from decisions.tsv" "0" \
+  "$(awk 'index($0, "leak") { n++ } END { print n + 0 }' "$W/cred/decisions.tsv")"
 
-o4="$(run "$W/allow" --yolo --allow-credentials)"; chk "the explicit flag proceeds" "0" "$?"
+o4="$(run "$W/allow" --yolo --allow-credentials)"; chk "the explicit flag includes it" "0" "$?"
 has "with a warning that they will be exported" "$o4" "WILL be exported"
 chk "the manifest records the decision" "true" "$(jq -r '.[0].allow_credentials' "$W/allow/manifest.json")"
 # One key, one hit. Two overlapping patterns previously counted it twice and
 # reported it under two vendors; an inflated disclosure is worse than none
 # because the reader cannot tell it is wrong.
 chk "one key counts once" "1" "$(jq -r '.[0].credential_hits' "$W/allow/manifest.json")"
-chk "under one vendor name" "anthropic_key" \
-  "$(HOME="$H" python3 "$SKILL/scripts/funnel.py" enrich "$W/allow/candidates.full.tsv" "$W/enr.tsv" >/dev/null 2>&1
-     awk -F'\t' 'NR==1{for(i=1;i<=NF;i++)h[$i]=i;next} $h["credential_kinds"]!=""{print $h["credential_kinds"]}' "$W/enr.tsv" | sort -u)"
+chk "and nothing was excluded" "0" "$(jq -r '.[0].credential_excluded' "$W/allow/manifest.json")"
+
+o5="$(run "$W/hard" --yolo --credential-hard-gate)"; chk "the hard gate refuses" "3" "$?"
+has "the refusal says so" "$o5" "refusing the batch"
+has "and names the posture flag" "$o5" "--credential-hard-gate"
+# Nothing may be left behind: a half-written directory would let a caller
+# mistake a refusal for a delivery.
+chk "and writes nothing at all" "absent" \
+  "$(test -e "$W/hard" && echo present || echo absent)"
 rm -f "$S/rollout-leak.jsonl"
 
 echo

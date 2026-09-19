@@ -88,8 +88,8 @@ Themes are not exclusive buckets.
 
 | Flow | Command | Typical use |
 |---|---|---|
-| Direction, unattended | `/session-export-nocode … 直接导出` | The standing agreement: they export, we buy, nobody reviews a list |
-| Direction, confirmed | `/session-export-nocode …` with no opt-out phrase | The same deterministic selection, with one batch-level yes/no |
+| Direction, unattended (default) | `/session-export-nocode …` | The standing agreement: they export, we buy, nobody reviews a list |
+| Direction, confirmed | `/session-export-nocode … --confirm` | The same deterministic selection, with one batch-level yes/no |
 | Base skill, interactive | `pick-sessions.sh` and the picker | A partner reviewing their own history row by row |
 
 The first two produce the same artifact and the same selection; only
@@ -97,10 +97,14 @@ The first two produce the same artifact and the same selection; only
 human choosing rows, which is why it keeps the `screen.tsv` step the direction
 path does not have.
 
-**Only an explicit phrase skips the confirmation.** `直接导出`, `无需确认`,
-`不用确认`, `无须确认` — and nothing else. Brevity, silence, and `帮我导出` all
-keep the prompt. The reason is asymmetry: a wrongly-withheld export costs one
-re-run, and a wrongly-authorised one has already left the machine.
+**The direction path is unattended by default** (item 31): the selection is
+deterministic — policy and theme word lists decide, no model judges — the
+skill uploads nothing, and credential-bearing rows are excluded and disclosed
+rather than shipped. A caller who wants a checkpoint passes `--confirm`; the
+launcher never withholds the export for the lack of a magic phrase. The old
+phrase gate was a weak control anyway — the agent composes the request
+string, so it could always write the phrase itself — while a wrongly-skipped
+confirmation cost a support round-trip.
 
 ## Two levels of knowledge
 
@@ -205,7 +209,7 @@ skills/agent-session-batch-export/   # the base skill: mechanism + policy + them
 skills/session-export-nocode/        # one direction bundle
   SKILL.md
   direction.json                     # theme names + purchase overrides; no numbers
-  scripts/session-export-nocode.sh   # phrase gate, then the base runner
+  scripts/session-export-nocode.sh   # unattended by default; --confirm restores the checkpoint
 docs/session-export/
   DESIGN.md                          # this file
   PACK-SPEC.md                       # what we buy and how it is checked

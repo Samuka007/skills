@@ -73,10 +73,15 @@ usually the Microsoft Store alias stub: a real file that exits 49 printing
 that probe fails it prints `scoop install python` / `winget install
 Python.Python.3.13` and stops.
 
-Sessions carrying credential shapes refuse the whole batch (exit 3, nothing
-written) unless `--allow-credentials` is passed, which is recorded in the
-manifest. That is disclosure and determinism, not a security boundary: an agent
-that rewrites its own artifacts is not stopped by it.
+Sessions carrying credential shapes are **excluded from the deliverable** by
+default: they are never written, and the run reports each exclusion (file +
+matched kind) and records it in the manifest (`credential_exclusions`,
+`credential_excluded`). `--allow-credentials` includes them after an explicit
+human decision and is recorded the same way. `--credential-hard-gate` keeps
+the stricter posture: any hit refuses the whole batch (exit 3, nothing
+written). None of this is a security boundary — an agent that rewrites its own
+artifacts is not stopped by it — and exclusion is not scrubbing: patterns miss
+things, so review before sharing.
 
 The shipped direction is [`session-export-nocode`](../session-export-nocode/SKILL.md).
 

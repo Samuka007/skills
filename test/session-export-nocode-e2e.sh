@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Focused acceptance test for the thin session-export-nocode direction adapter.
-# The base runner is a stub: this test proves argument policy and sibling
-# discovery without copying sessions or exercising the base pipeline.
+# Phase A stubs the base runner and proves argument policy and sibling
+# discovery without copying sessions. Phase B swaps in the real base skill and
+# runs the pipeline over a fixture store: credential exclusion and disclosure,
+# the --allow-credentials override, the --credential-hard-gate refusal, the
+# all-excluded edge, and the --confirm checkpoint in both answers.
 set -uo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -214,14 +217,14 @@ has "install command names the base skill" "$missing_text" "--skill agent-sessio
 chk "missing base does not call the stub" "$(wc -l < "$RUNNER_LOG" | tr -d ' ')" "0"
 
 echo
-echo "== request phrase matrix =="
+echo "== request matrix: unattended is the default, --confirm is the switch =="
 RUN_HOME="$WORK/home"
 mkdir -p "$RUN_HOME"
 case_no=0
 run_case() {
   local label="$1"
-  local request="$2"
-  local want_yolo="$3"
+  local want_yolo="$2"
+  shift 2
   local out="$WORK/runs/$label"
   local capture="$WORK/capture-$label"
   local result
@@ -242,10 +245,7 @@ run_case() {
   result="$(
     CAPTURE_FILE="$capture" RUNNER_LOG="$RUNNER_LOG" HOME="$RUN_HOME" \
       bash "$SKILL/scripts/session-export-nocode.sh" \
-        --request "$request" --out "$out" \
-        --allow-credentials --agent codex \
-        --workspace "demo 直接导出 workspace" \
-        --since 2026-01-02 --min-lines 0 2>&1
+        --out "$out" "$@" 2>&1
   )"
   rc=$?
   chk "$label exits successfully" "$rc" "0"
@@ -258,12 +258,6 @@ run_case() {
     "$(arg_value "$capture" "--direction-file")" "$SKILL/direction.json"
   chk "$label passes the output directory" \
     "$(arg_value "$capture" "--out")" "$out"
-  chk "$label forwards credentials choice" "$(arg_count "$capture" "--allow-credentials")" "1"
-  chk "$label forwards agent filter" "$(arg_value "$capture" "--agent")" "codex"
-  chk "$label forwards workspace as one value" \
-    "$(arg_value "$capture" "--workspace")" "demo 直接导出 workspace"
-  chk "$label forwards since filter" "$(arg_value "$capture" "--since")" "2026-01-02"
-  chk "$label forwards zero min-lines" "$(arg_value "$capture" "--min-lines")" "0"
   chk "$label does not forward the natural-language request" "$(arg_count "$capture" "--request")" "0"
   count="$(arg_count "$capture" "--yolo")"
   chk "$label yolo flag policy" "$count" "$want_yolo"
@@ -287,13 +281,38 @@ run_case() {
   fi
 }
 
-run_case "direct-export" "请直接导出这批非代码轨迹" 1
-run_case "without-confirmation" "无需确认，直接交付" 1
-run_case "dont-confirm" "不用确认，请导出" 1
-run_case "no-need-confirm" "无须确认，开始导出" 1
-run_case "ask-export" "帮我导出" 0
-run_case "empty-request" "" 0
-run_case "prepare-only" "请准备一下" 0
+# The retired phrase gate is gone: EVERY wording takes the same unattended
+# path, and only the explicit --confirm switch removes --yolo.
+run_case "phrase-direct-export" 1 --request "请直接导出这批非代码轨迹"
+run_case "phrase-no-need-confirm" 1 --request "无需确认，直接交付"
+run_case "phrase-dont-confirm" 1 --request "不用确认，请导出"
+run_case "phrase-no-need2" 1 --request "无须确认，开始导出"
+run_case "plain-ask" 1 --request "帮我导出"
+run_case "empty-request" 1 --request ""
+run_case "prepare-only" 1 --request "请准备一下"
+run_case "no-request-flag" 1
+
+# --confirm withholds --yolo, and wins when both are given: the conservative
+# reading of a contradictory command line. The [y/N] prompt itself is proven
+# against the real runner in phase B.
+run_case "confirm-with-request" 0 --request "先确认再导" --confirm
+run_case "confirm-bare" 0 --confirm
+run_case "confirm-wins-over-yolo" 0 --yolo --confirm
+
+# Forwarding contract, once, with every forwardable option set. The workspace
+# value deliberately contains a retired gate phrase: a value is a value, and
+# must arrive at the runner intact rather than be reinterpreted.
+run_case "forwarders" 1 \
+  --allow-credentials --agent codex \
+  --workspace "demo 直接导出 workspace" \
+  --since 2026-01-02 --min-lines 0
+cap="$WORK/capture-forwarders"
+chk "forwarders forwards credentials choice" "$(arg_count "$cap" "--allow-credentials")" "1"
+chk "forwarders forwards agent filter" "$(arg_value "$cap" "--agent")" "codex"
+chk "forwarders forwards workspace as one value" \
+  "$(arg_value "$cap" "--workspace")" "demo 直接导出 workspace"
+chk "forwarders forwards since filter" "$(arg_value "$cap" "--since")" "2026-01-02"
+chk "forwarders forwards zero min-lines" "$(arg_value "$cap" "--min-lines")" "0"
 
 echo
 echo "== clean output remains free of selection files =="
@@ -302,7 +321,7 @@ CLEAN_CAPTURE="$WORK/clean-capture"
 mkdir -p "$CLEAN_OUT"
 CAPTURE_FILE="$CLEAN_CAPTURE" RUNNER_LOG="$RUNNER_LOG" HOME="$RUN_HOME" \
   bash "$SKILL/scripts/session-export-nocode.sh" \
-    --request "请准备一下" --out "$CLEAN_OUT" >/dev/null 2>&1
+    --out "$CLEAN_OUT" >/dev/null 2>&1
 clean_rc=$?
 chk "clean-output invocation exits successfully" "$clean_rc" "0"
 for file in candidates.tsv screen.tsv decisions.tsv; do
@@ -315,6 +334,109 @@ done
 
 chk "stub call count equals phrase cases plus clean case" \
   "$(wc -l < "$RUNNER_LOG" | tr -d ' ')" "$((case_no + 1))"
+
+echo
+echo "== phase B: the real pipeline over a fixture store =="
+command -v jq >/dev/null 2>&1 || { echo "session-export-nocode e2e: phase B needs jq"; exit 1; }
+python3 -c '' >/dev/null 2>&1 || { echo "session-export-nocode e2e: phase B needs a working python3"; exit 1; }
+
+# Swap the stub for the real base skill and build a two-session codex store:
+# one clean planning session, one carrying an API-key shape. Both satisfy the
+# planning theme, so the direction's selection is nonempty and the only
+# difference between them is the credential.
+rm -rf "$BASE"
+mkdir -p "$BASE"
+cp -R "$REPO/skills/agent-session-batch-export/." "$BASE/"
+STORE="$RUN_HOME/.codex/sessions/2026/09/15"
+mkdir -p "$STORE"
+meta='{"type":"session_meta","payload":{"cwd":"/home/demo/notes","model_provider":"OpenAI"}}'
+mkcodex() { # name  user-text
+  { printf '%s\n' "$meta"
+    printf '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":%s}]}}\n' \
+      "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$2")"
+    printf '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"好的，方案如下。"}]}}\n'
+  } > "$STORE/rollout-$1.jsonl"
+}
+mkcodex plan-a '帮我做一份五一活动的营销策划，包含时间表和预算方案'
+mkcodex leak-b '这是我的密钥 sk-ant-abcdefghij0123456789，帮我顺便核对营销策划的预算方案'
+
+launcher() { # outdir  args...
+  local out="$1"; shift
+  rm -rf "$out"
+  HOME="$RUN_HOME" bash "$SKILL/scripts/session-export-nocode.sh" --out "$out" "$@" 2>&1
+}
+
+# Default: the credential hit is excluded and disclosed; the rest delivers.
+o1="$(launcher "$WORK/real/excl")"
+chk "default run delivers despite a credential hit" "0" "$?"
+has "the exclusion is disclosed per file" "$o1" "excluded: "
+has "with the credential kind" "$o1" "[anthropic_key]"
+has "and the summary line" "$o1" \
+  "credential exclusions: 1 session(s) excluded (nothing from them was written)"
+m1="$WORK/real/excl/manifest.json"
+chk "the delivery holds exactly the clean session" "1" "$(jq 'length' "$m1")"
+has "the manifest names the excluded source" \
+  "$(jq -r '.[0].credential_exclusions[0].source' "$m1")" "rollout-leak-b.jsonl"
+chk "the manifest records the exclusion kind" "anthropic_key" \
+  "$(jq -r '.[0].credential_exclusions[0].kinds[0]' "$m1")"
+chk "one exclusion recorded" "1" "$(jq -r '.[0].credential_excluded' "$m1")"
+chk "allow_credentials stays false by default" "false" "$(jq -r '.[0].allow_credentials' "$m1")"
+chk "unattended run records batch_confirmed=false" "false" "$(jq -r '.[0].batch_confirmed' "$m1")"
+chk "the excluded row is absent from decisions.tsv" "0" \
+  "$(awk 'index($0, "leak-b") { n++ } END { print n + 0 }' "$WORK/real/excl/decisions.tsv")"
+chk "and absent from the delivered manifest entries" "0" \
+  "$(jq '[.[] | select(.source | test("leak-b"))] | length' "$m1")"
+
+# --allow-credentials: the explicit human decision includes the hit.
+o2="$(launcher "$WORK/real/allow" --allow-credentials)"
+chk "the explicit flag includes the hit" "0" "$?"
+has "with a warning that they will be exported" "$o2" "WILL be exported"
+m2="$WORK/real/allow/manifest.json"
+chk "both sessions delivered" "2" "$(jq 'length' "$m2")"
+chk "the manifest records the human decision" "true" "$(jq -r '.[0].allow_credentials' "$m2")"
+chk "nothing was excluded" "0" "$(jq -r '.[0].credential_excluded' "$m2")"
+chk "and the exclusions list is empty" "0" "$(jq -r '.[0].credential_exclusions | length' "$m2")"
+chk "one key counts once" "1" "$(jq -r '.[0].credential_hits' "$m2")"
+
+# --credential-hard-gate (a driver flag; called here directly): any hit, no
+# output, exit 3.
+o3="$(HOME="$RUN_HOME" bash "$BASE/scripts/export-direction.sh" \
+  --direction-file "$SKILL/direction.json" -o "$WORK/real/hard" \
+  --yolo --credential-hard-gate 2>&1)"
+hg_rc=$?
+chk "the hard gate refuses the batch" "3" "$hg_rc"
+has "the refusal says so" "$o3" "refusing the batch"
+has "and names the posture flag" "$o3" "--credential-hard-gate"
+chk "and writes nothing at all" "absent" \
+  "$(test -e "$WORK/real/hard" && echo present || echo absent)"
+
+# All-excluded edge: the honest report, no empty package.
+mv "$STORE/rollout-plan-a.jsonl" "$WORK/plan-a.parked"
+o4="$(launcher "$WORK/real/none")"
+chk "an all-excluded run still succeeds honestly" "0" "$?"
+has "it says nothing remains" "$o4" "0 sessions remain"
+has "and why" "$o4" "excluded as credential-bearing"
+chk "and no directory was written" "absent" \
+  "$(test -e "$WORK/real/none" && echo present || echo absent)"
+mv "$WORK/plan-a.parked" "$STORE/rollout-plan-a.jsonl"
+
+# --confirm answered y: the batch-level checkpoint, batch_confirmed=true.
+o5="$(printf 'y\n' | launcher "$WORK/real/confirm" --confirm)"
+chk "confirm answered y delivers" "0" "$?"
+has "the runner asked once" "$o5" "[y/N]"
+m5="$WORK/real/confirm/manifest.json"
+chk "the manifest records the batch confirmation" "true" "$(jq -r '.[0].batch_confirmed' "$m5")"
+chk "and the delivery holds the clean session" "1" "$(jq 'length' "$m5")"
+
+# --confirm at EOF: fail-closed, nothing written.
+o6="$(launcher "$WORK/real/eof" --confirm </dev/null)"
+eof_rc=$?
+non0 "EOF at the prompt fails closed" "$eof_rc"
+has "the failure says why" "$o6" "no answer on stdin"
+chk "and nothing was written" "absent" \
+  "$(test -e "$WORK/real/eof" && echo present || echo absent)"
+
+rm -f "$STORE/rollout-leak-b.jsonl" "$STORE/rollout-plan-a.jsonl"
 
 printf '\n=====================\n'
 if [[ "$fail" -eq 0 ]]; then

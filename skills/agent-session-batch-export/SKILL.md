@@ -155,9 +155,15 @@ Two failures are actionable rather than fatal, and both belong to the user:
 - **`python3` unusable.** The engine is Python and there is no fallback. Show the
   script's `scoop install python` / `winget install Python.Python.3.13` hint and
   ask whether to install and retry. Never substitute your own semantic screening.
-- **Credential shapes found.** The run refuses the whole batch (exit 3, nothing
-  written). Report the count and offer the explicit `--allow-credentials` re-run;
-  never add that flag on your own initiative.
+- **Credential shapes found.** Default: those sessions are EXCLUDED from the
+  deliverable — never written — and the run prints each exclusion (source and
+  credential kinds) plus the count; report that list to the user. The rest
+  delivers normally, and the manifest records the exclusions.
+  `--allow-credentials` includes them instead — an explicit human decision,
+  recorded in the manifest; offer it, never add it on your own initiative.
+  `--credential-hard-gate` refuses the whole batch instead (exit 3, nothing
+  written). Whatever the posture: the delivered sessions are NOT scrubbed —
+  review before sharing.
 
 ## Collection (`funnel.py collect`) — the third posture
 
@@ -196,6 +202,15 @@ Then `review --ui tsv` converts it into `decisions.tsv` with
 disagree with.
 
 ### Hand-off gate (stop here — this is not your decision)
+
+**First, route by the request.** A delivery-bound export of NON-CODE sessions
+defaults to the nocode direction launcher (`session-export-nocode`), and the
+launcher is unattended by design: it always runs `--yolo`, so there is nothing
+to hand off and no gate to pass. The staged pipeline in this section — screen,
+hand-off gate, user-approved finalize — serves the requests no shipped
+direction covers, and runs the user wants to review row by row. Do not route a
+plain non-code export request through the staged path by preference; that is
+the mood-driven path choice the direction default exists to remove.
 
 The keep/drop decision belongs to the USER. Your screening is a
 recommendation, never the decision. The two paths divide finalize's meaning:
@@ -241,6 +256,12 @@ approved_by=user-opt-out`. Integrity checks are NOT skipped — sha256 + cmp
 still verify every copy. Yolo is legitimate ONLY on explicit wording: never
 infer it from brevity, silence, or a busy-sounding user. Without the user's
 own explicit opt-out, run the normal gate above.
+
+On the direction path this clause is already the default: the
+`session-export-nocode` launcher always passes `--yolo` (the manifest records
+`batch_confirmed=false`), and `--confirm` restores the batch-level `[y/N]`
+checkpoint. The wording requirement above is about the staged and interactive
+paths, where review is the default.
 
 Judge from the prose, not from the metadata row. Column 6 (`first_prompt`) is a
 triage hint and can be blank: codex writes `<environment_context>`, AGENTS.md

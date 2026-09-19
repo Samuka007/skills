@@ -16,8 +16,11 @@ if [[ "$__crlf_hit" -eq 1 ]]; then                                              
 fi                                                                                                                     # CRLF-GUARD
 
 # Thin direction adapter. The base skill owns the export pipeline; this file
-# only resolves it, reads the request for the explicit review opt-out, and
-# forwards the shared runner arguments.
+# only resolves it and forwards the shared runner arguments. The default is
+# unattended: --yolo is ALWAYS passed, because nothing on this path needs a
+# judgment call (the policy plus the direction's themes decide the selection,
+# deterministically) and nothing leaves this machine. --confirm is the one
+# switch that reintroduces a checkpoint.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,13 +29,20 @@ DIRECTION_FILE="$SKILL_DIR/direction.json"
 
 usage() {
   cat <<'USAGE'
-Usage: session-export-nocode.sh --request TEXT --out DIR [options]
+Usage: session-export-nocode.sh --out DIR [--confirm] [options]
 
 Required
-  --request TEXT       the user's complete request (used only for opt-out policy)
   -o, --out DIR       output directory for the base runner
 
-Forwarded to agent-session-batch-export
+Optional
+      --confirm       run attended: the base runner asks one batch-level
+                      [y/N] before exporting. y delivers (manifest
+                      batch_confirmed=true); EOF or any other answer
+                      exports nothing. Wins over --yolo if both are given
+      --request TEXT  accepted for backward compatibility with earlier
+                      callers; used by no gate and forwarded nowhere
+      --yolo          the default behavior already; accepted so old
+                      command lines keep working
       --allow-credentials
   -a, --agent NAME
   -w, --workspace STR
@@ -40,8 +50,10 @@ Forwarded to agent-session-batch-export
   -n, --min-lines N
   -h, --help
 
-The launcher adds --yolo only when TEXT contains one of:
-  直接导出  无需确认  不用确认  无须确认
+Unmarked options are forwarded to agent-session-batch-export. The base
+runner excludes credential-bearing sessions from the delivery by default
+and reports each exclusion; --allow-credentials includes them (an explicit
+human decision, recorded in the manifest).
 USAGE
 }
 
@@ -50,22 +62,17 @@ die() {
   exit "${2:-1}"
 }
 
-REQUEST=""
-REQUEST_SET=0
 OUTDIR=""
+CONFIRM=0
 FORWARD_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --request)
       [[ $# -ge 2 ]] || die "--request needs a value" 2
-      REQUEST="$2"
-      REQUEST_SET=1
       shift 2
       ;;
     --request=*)
-      REQUEST="${1#*=}"
-      REQUEST_SET=1
       shift
       ;;
     -o|--out)
@@ -77,6 +84,14 @@ while [[ $# -gt 0 ]]; do
       OUTDIR="${1#*=}"
       shift
       ;;
+    --confirm)
+      CONFIRM=1
+      shift
+      ;;
+    --yolo)
+      # The default behavior; accepted so old invocations keep working.
+      shift
+      ;;
     --allow-credentials)
       FORWARD_ARGS+=("$1")
       shift
@@ -85,9 +100,6 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die "$1 needs a value" 2
       FORWARD_ARGS+=("$1" "$2")
       shift 2
-      ;;
-    --yolo)
-      die "--yolo is derived from --request; use one of the explicit opt-out phrases" 2
       ;;
     -h|--help)
       usage
@@ -99,7 +111,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ "$REQUEST_SET" -eq 1 ]] || { usage >&2; die "--request is required" 2; }
 [[ -n "$OUTDIR" ]] || { usage >&2; die "--out is required and cannot be empty" 2; }
 [[ -f "$DIRECTION_FILE" ]] || die "bundled direction file is missing: $DIRECTION_FILE"
 
@@ -112,19 +123,21 @@ for root in \
   "${HOME:-}/.claude/skills" \
   "${PWD:-.}/.agents/skills" \
   "${PWD:-.}/.claude/skills"; do
-  candidate="$root/agent-session-batch-export/scripts/export-direction.sh"
-  if [[ -f "$candidate" ]]; then
-    BASE_RUNNER="$candidate"
+  if [[ -f "$root/agent-session-batch-export/scripts/export-direction.sh" ]]; then
+    BASE_RUNNER="$root/agent-session-batch-export/scripts/export-direction.sh"
     break
   fi
 done
 
 if [[ -z "$BASE_RUNNER" ]]; then
   {
-    echo "session-export-nocode: the base skill is missing."
-    echo "Expected: agent-session-batch-export/scripts/export-direction.sh"
-    echo "Install both published skills together:"
-    echo "  npx skills add Samuka007/skills --skill session-export-nocode --skill agent-session-batch-export -g -y"
+    echo "session-export-nocode: cannot find the base skill's runner."
+    echo "  expected agent-session-batch-export/scripts/export-direction.sh next"
+    echo "  to this skill, in ~/.agents/skills, ~/.claude/skills, or"
+    echo "  ./.agents/skills. Install the two skills together:"
+    echo
+    echo "    npx skills add Samuka007/skills \\"
+    echo "      --skill session-export-nocode --skill agent-session-batch-export -g -y"
   } >&2
   exit 1
 fi
@@ -132,14 +145,15 @@ fi
 RUNNER_ARGS=(--direction-file "$DIRECTION_FILE" --out "$OUTDIR")
 RUNNER_ARGS+=("${FORWARD_ARGS[@]}")
 
-# These are the only accepted natural-language opt-outs. This is deliberately
-# a substring match: the policy says the request must contain the exact phrase.
-case "$REQUEST" in
-  *直接导出*|*无需确认*|*不用确认*|*无须确认*)
-    RUNNER_ARGS+=(--yolo)
-    ;;
-esac
+# Unattended is the default; --confirm is the exception, and passing both
+# asks rather than overrides — the conservative reading of a contradictory
+# command line. No combination is rejected: the request text is accepted
+# and ignored, and --yolo by hand is the default spelled out.
+if [[ "$CONFIRM" -eq 0 ]]; then
+  RUNNER_ARGS+=(--yolo)
+fi
 
 # Do not intercept or reinterpret runner output: Python preflight and
-# credential-refusal messages are actionable states owned by the base skill.
+# credential-disposition messages are actionable states owned by the base
+# skill.
 exec bash "$BASE_RUNNER" "${RUNNER_ARGS[@]}"

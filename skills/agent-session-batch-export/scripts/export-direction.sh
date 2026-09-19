@@ -62,8 +62,12 @@ Options
                               caller must already hold the user's explicit
                               opt-out; this script does not interpret prose
       --allow-credentials     export sessions carrying credential shapes
-                              (recorded in the manifest). Without it, any hit
-                              refuses the whole batch
+                              (recorded in the manifest). Without it those
+                              sessions are EXCLUDED from the delivery and the
+                              exclusion is reported — the rest delivers
+      --credential-hard-gate  any credential hit refuses the whole batch
+                              (exit 3, nothing written): the "any dirty, no
+                              output" posture. Wins over --allow-credentials
       --no-delivery           stop after the manifest; write no archive
 
 Scan filters (passed to the pipeline's scan)
@@ -131,6 +135,7 @@ DIRECTION_FILE=""
 OUTDIR=""
 YOLO=0
 ALLOW_CRED=0
+HARD_GATE=0
 NO_DELIVERY=0
 AGENT=both
 WORKSPACE=""
@@ -145,6 +150,7 @@ while [[ $# -gt 0 ]]; do
                       OUTDIR="$2"; shift 2 ;;
     --yolo)           YOLO=1; shift ;;
     --allow-credentials) ALLOW_CRED=1; shift ;;
+    --credential-hard-gate) HARD_GATE=1; shift ;;
     --no-delivery)    NO_DELIVERY=1; shift ;;
     -a|--agent)       [[ $# -ge 2 ]] || { usage >&2; die "--agent needs a value" 2; }
                       AGENT="$2"; shift 2 ;;
@@ -393,8 +399,8 @@ qualified="$(awk 'END { print NR + 0 }' "$TMP/.direction/union")"
 
 # ------------------------------------------------------------ 3. credentials
 # The scanner is the funnel's L8 stage; `enrich` is how its per-session columns
-# are read back. One implementation, and the policy decision (refuse or record)
-# lives here where --allow-credentials is.
+# are read back. One implementation, and the policy decision (exclude, record,
+# or refuse) lives here where the flags are.
 #
 # This is disclosure and determinism, NOT a security boundary. An agent that
 # rewrites its own artifacts is not stopped by it, and nothing here should be
@@ -433,25 +439,74 @@ else
   echo "credentials: none in the qualifying sessions"
 fi
 
-# ------------------------------------------------------- 5. credential gate
-if [[ "$cred_hits" -gt 0 && "$ALLOW_CRED" -eq 0 ]]; then
+# ------------------------------------------------ 5. credential disposition
+# Three postures over a credential hit (the funnel's L8 stage annotates; it
+# never kills — the decision is made here, where the flags are):
+#   default                 the hit is EXCLUDED from the deliverable — never
+#                           written — and the exclusion is disclosed per file
+#                           and recorded in the manifest; the rest delivers
+#   --allow-credentials     the hit is exported (an explicit human decision,
+#                           recorded in the manifest)
+#   --credential-hard-gate  any hit refuses the whole batch (exit 3, nothing
+#                           written). Wins over --allow-credentials: a caller
+#                           who asked for "any dirty, no output" gets exactly
+#                           that.
+cred_excl_n=0
+cred_excl_json="[]"
+excl_file="$TMP/.direction/cred-excluded.tsv"
+: > "$excl_file"
+if [[ "$cred_hits" -gt 0 && "$HARD_GATE" -eq 1 ]]; then
   {
     echo
     echo "export-direction: refusing the batch — $cred_hits session(s) carry credential shapes."
+    echo "  (--credential-hard-gate was passed: any hit means nothing is written.)"
     echo "  these are your own machine's history and may hold your keys."
-    echo "  re-run with --allow-credentials to export them anyway (recorded in the"
-    echo "  manifest), or use the interactive review path where flagged rows arrive"
-    echo "  unselected. Redaction is not offered: it would break byte-identity."
+    echo "  without the flag this run would exclude them and deliver the rest;"
+    echo "  with --allow-credentials it would export them (recorded in the"
+    echo "  manifest). Redaction is not offered: it would break byte-identity."
     echo "  nothing was written."
   } >&2
   exit 3
 fi
-[[ "$cred_hits" -gt 0 ]] && \
+if [[ "$cred_hits" -gt 0 && "$ALLOW_CRED" -eq 0 ]]; then
+  # The exclusion list is every qualifying session whose L8 column is set,
+  # with the kinds the scanner named. The delivered union is the survivors
+  # minus these rows: nothing about them reaches decisions.tsv, keep/, or the
+  # archive — the disclosure above and the manifest record are the trace.
+  awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) h[$i] = i; next }
+              h["credential_hit"] && $h["credential_hit"] == "1" {
+                print $h["session_file"] "\t" $h["credential_kinds"]
+              }' "$enr" > "$excl_file"
+  cred_excl_n="$(wc -l < "$excl_file" | tr -d ' ')"
+  echo
+  while IFS="$(printf '\t')" read -r xsrc xkinds; do
+    printf 'excluded: %s [%s]\n' "$xsrc" "$xkinds"
+  done < "$excl_file"
+  echo "credential exclusions: $cred_excl_n session(s) excluded (nothing from them was written)"
+  awk -F'\t' 'NR == FNR { if ($1 != "") X[$1] = 1; next }
+              !($0 in X)' "$excl_file" "$TMP/.direction/union" > "$TMP/.direction/union.excluded"
+  mv "$TMP/.direction/union.excluded" "$TMP/.direction/union"
+  # No outer [ ] around the pipeline: the pipeline already yields ONE array,
+  # and a collect would wrap it a second time ([[…]] instead of […]).
+  cred_excl_json="$(jqr -nc --rawfile x "$excl_file" '
+    $x | split("\n") | map(select(length > 0)) | map(split("\t"))
+       | map({ source: .[0],
+               kinds: ((.[1] // "" | split(",")) | map(select(length > 0))) })')"
+fi
+[[ "$cred_hits" -gt 0 && "$ALLOW_CRED" -eq 1 ]] && \
   echo "warning: $cred_hits session(s) with credential shapes WILL be exported (--allow-credentials)"
 
-if [[ "$qualified" -eq 0 ]]; then
+# The delivered count is the qualification minus what step 5 removed; with no
+# exclusions it is the same number, so every downstream message is exact.
+deliver_n="$(awk 'END { print NR + 0 }' "$TMP/.direction/union")"
+if [[ "$deliver_n" -eq 0 ]]; then
   echo
-  echo "0 sessions qualify — nothing to export. No directory was written."
+  if [[ "$cred_excl_n" -gt 0 ]]; then
+    echo "0 sessions remain — every qualifying session was excluded as credential-bearing."
+    echo "Nothing to export. No directory was written."
+  else
+    echo "0 sessions qualify — nothing to export. No directory was written."
+  fi
   exit 0
 fi
 
@@ -459,7 +514,7 @@ fi
 if [[ "$YOLO" -eq 1 ]]; then
   echo "confirmation skipped (--yolo)"
 else
-  printf 'export these %s session(s)? [y/N] ' "$qualified"
+  printf 'export these %s session(s)? [y/N] ' "$deliver_n"
   ans=""
   if ! read -r ans; then
     echo
@@ -473,7 +528,8 @@ fi
 echo
 
 # ------------------------------------------- 7. install the funnel's decision
-# The funnel's survivors ARE the decision: decisions.tsv is written straight
+# The funnel's survivors ARE the decision (minus the credential exclusions of
+# step 5, which were removed from the union): decisions.tsv is written straight
 # from them with decision=keep, and no screen.tsv suggestion step exists. This
 # is the difference between the direction path and the interactive one — there
 # is no row for an agent to fill, so there is none for it to get wrong.
@@ -506,7 +562,7 @@ awk -F'\t' -v ck="$TMP/.direction/union-enriched.tsv" -v msg="$cred_note" '
 ' "$OUTDIR_ABS/candidates.tsv" > "$OUTDIR_ABS/decisions.tsv"
 
 cp -R "$TMP/.direction" "$OUTDIR_ABS/.direction"
-echo "selection installed: $qualified session(s) chosen by the funnel"
+echo "selection installed: $deliver_n session(s) chosen by the funnel"
 echo "  (decisions.tsv written from the funnel's survivors; no screening step)"
 echo
 
@@ -520,7 +576,7 @@ bash "$CURATE" finalize -o "$OUTDIR_ABS" --yolo || die "finalize failed"
 MANIFEST="$OUTDIR_ABS/manifest.json"
 [[ -f "$MANIFEST" ]] || die "no manifest after finalize"
 kept="$(jqr 'length' "$MANIFEST")"
-[[ "$kept" -gt 0 ]] || die "finalize kept nothing despite $qualified qualifying sessions"
+[[ "$kept" -gt 0 ]] || die "finalize kept nothing despite $deliver_n qualifying sessions"
 
 # ------------------------------------------- 9. direction fields per entry
 # Per-theme record of what actually ran: the theme, the composed override it
@@ -546,6 +602,7 @@ dir_obj="$(jqr -nc \
   --argjson entries "$entries_json" \
   --arg pfile "$POLICY_FILE" --arg psha "$POLICY_SHA" \
   --argjson allow "$ALLOW_CRED" --argjson hits "$cred_hits" \
+  --argjson exclusions "$cred_excl_json" --argjson excln "$cred_excl_n" \
   --argjson conf "$([[ "$YOLO" -eq 1 ]] && echo 0 || echo 1)" \
   --argjson scanned "$scanned" \
   '{direction: (if $dir == "" then null else $dir end),
@@ -556,7 +613,9 @@ dir_obj="$(jqr -nc \
     entries: $entries,
     policy: {file: $pfile, sha256: $psha},
     allow_credentials: ($allow == 1),
-    credential_hits: $hits}')"
+    credential_hits: $hits,
+    credential_exclusions: $exclusions,
+    credential_excluded: $excln}')"
 
 jqr --argjson d "$dir_obj" --rawfile tm "$thememap" '
   ($tm | split("\n") | map(select(length > 0)) | map(split("\t"))
@@ -577,3 +636,6 @@ echo
 echo "export-direction: done"
 echo "  out:      $OUTDIR_ABS"
 echo "  manifest: $MANIFEST"
+if [[ "$cred_excl_n" -gt 0 ]]; then
+  echo "  excluded: $cred_excl_n credential-bearing session(s) — see credential_exclusions in the manifest"
+fi

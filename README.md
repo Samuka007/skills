@@ -45,13 +45,13 @@ selection and hands back a verified archive:
 
 ```bash
 bash ~/.agents/skills/session-export-nocode/scripts/session-export-nocode.sh \
-  --request "直接导出非代码会话" \
   --out ./out
 ```
 
-The opt-out phrase (`直接导出` / `无需确认` / `不用确认` / `无须确认`) is what
-skips the confirmation; without one of those exact phrases the same command
-stops at a single `[y/N]`.
+This runs unattended by default: the selection is deterministic and nothing
+uploads. Sessions that look like they carry credentials are excluded and
+reported, not shipped. A caller who wants a checkpoint adds `--confirm`, and
+the same command stops at one `[y/N]`.
 
 **Ask your agent.** Agents with skill discovery (codex, claude code, opencode,
 …) find the installed skill from your request and drive the scripts for you.
