@@ -27,9 +27,13 @@ npx skills add Samuka007/skills \
 
 Two layers, one rule about where a change lands. The **base skill** owns the
 mechanism (the funnel), the global policy, the themes, and the pipeline. A
-**direction bundle** owns only a theme list, the overrides that define the
-purchase, and its invocation policy — it restates no threshold, so adding a
-purchase direction adds one small skill and changes no numbers.
+**direction bundle** owns a theme list, the overrides that define the
+purchase, and its invocation policy. One threshold may enter a direction
+override — the purchase's own packaging bar (the nocode direction pins
+`min_user_turns`, aligned with the reference bundle's turn profile; decision
+of 2026-09-21) — because it is a term of the purchase, not engine
+calibration. Every other number stays in the policy, so adding a purchase
+direction adds one small skill.
 
 Two published skills have been retired — `trajectory-packs`, and the engine
 directory `trajectory-funnel` beside it — and replaced by the two above. The

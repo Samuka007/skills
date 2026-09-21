@@ -29,11 +29,12 @@ declares exactly these themes, each resolved by name against the base skill's
 
 Each entry is a `{ "theme": NAME }` object with an optional per-theme
 `override`; the four shipped entries are plain names. What the purchase
-constrains lives in the direction's root `override`: it supplies the
-`exclude_keywords` word list — the coding-signal terms whose absence defines
-"non-code". The direction carries no thresholds; the shared quality standard
-is the base skill's `scripts/policy.json`, and no file in this skill restates
-it.
+constrains lives in the direction's root `override`: the `exclude_keywords`
+word list — the coding-signal terms whose absence defines "non-code" — and
+the packaging bar, one deliberate number (`min_user_turns`) that makes
+entries match the reference bundle's multi-turn caliber. Its value lives in
+`direction.json`, not here. Every other stage comes from the base skill's
+`scripts/policy.json`, and no file in this skill restates those values.
 
 Choose an output directory, then run:
 

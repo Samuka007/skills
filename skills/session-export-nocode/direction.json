@@ -3,6 +3,7 @@
   "direction": "nocode",
   "skill": "session-export-nocode",
   "override": {
+    "min_user_turns": 5,
     "exclude_keywords": [
       "shellcheck",
       "stack trace",
@@ -39,6 +40,7 @@
   ],
   "_provenance": {
     "themes": "SPEC item 29: the purchase narrows from six prose themes to four. `writing` merges the former generation and rewriting word lists; `report-analysis` refocuses the former data-analysis list toward reports; `planning` is new; role-play unchanged. `translation`, `rewriting` and `multimodal` remain shipped as ad-hoc themes but leave the direction",
-    "override.exclude_keywords": "DECISION: 'mainly not code' is a negative property, so coding signals are what disqualify. Shared by every theme in this family — held here, at the direction layer, so the word list is stated once and every theme run judges with the same one"
+    "override.exclude_keywords": "DECISION: 'mainly not code' is a negative property, so coding signals are what disqualify. Shared by every theme in this family — held here, at the direction layer, so the word list is stated once and every theme run judges with the same one",
+    "override.min_user_turns": "DECISION (2026-09-21, user): the packaging bar aligns with the reference bundle's own turn profile — its translation entries carry 7 and 8 user turns, its role-play entries 15/30/45 — and 5 is the floor that reproduces that caliber while killing the one-shot request (the value the Windows verification used to separate the two). Supersedes, for this direction only, the global no-turn-floor DECISION: the base policy stays 0 so a generic one-shot still qualifies outside this purchase"
   }
 }

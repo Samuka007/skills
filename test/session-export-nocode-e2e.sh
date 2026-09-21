@@ -172,7 +172,7 @@ excl_count="$(awk '
   END { print n + pending + 0 }
 ' "$SKILL/direction.json")"
 chk "the shared exclusion list ships 25 signals" "25" "$excl_count"
-for forbidden in defaults overrides keywords min_user_turns min_assistant_turns \
+for forbidden in defaults overrides keywords min_assistant_turns \
   sig_ratio_min require_end_turn max_tool_ratio dedup_threshold policy; do
   if contains_file "$SKILL/direction.json" "\"$forbidden\""; then
     no "direction does not copy policy key $forbidden"
@@ -180,6 +180,15 @@ for forbidden in defaults overrides keywords min_user_turns min_assistant_turns 
     ok "direction omits policy key $forbidden"
   fi
 done
+# The override carries exactly one deliberate number: the purchase's own
+# packaging bar (decision of 2026-09-21 — the reference bundle's caliber).
+# Every other policy threshold stays in the base skill's policy.json; a
+# direction restating one of those is smuggling engine calibration.
+if contains_file "$SKILL/direction.json" '"min_user_turns": 5'; then
+  ok "direction pins the packaging bar min_user_turns=5 (the reference bundle's caliber)"
+else
+  no "direction does not pin the packaging bar min_user_turns=5"
+fi
 
 # No mechanism or theme bundle may be hidden inside this published direction.
 for forbidden_path in \
@@ -340,25 +349,34 @@ echo "== phase B: the real pipeline over a fixture store =="
 command -v jq >/dev/null 2>&1 || { echo "session-export-nocode e2e: phase B needs jq"; exit 1; }
 python3 -c '' >/dev/null 2>&1 || { echo "session-export-nocode e2e: phase B needs a working python3"; exit 1; }
 
-# Swap the stub for the real base skill and build a two-session codex store:
-# one clean planning session, one carrying an API-key shape. Both satisfy the
-# planning theme, so the direction's selection is nonempty and the only
-# difference between them is the credential.
+# Swap the stub for the real base skill and build a three-session codex store,
+# all under the planning theme: a clean multi-turn session, a multi-turn
+# session carrying an API-key shape, and a one-turn session. The two multi-turn
+# entries match the direction's packaging bar (min_user_turns=5), so the only
+# difference between the first two is the credential; the one-turn entry
+# satisfies the theme but dies at the bar, which is the floor doing its job.
 rm -rf "$BASE"
 mkdir -p "$BASE"
 cp -R "$REPO/skills/agent-session-batch-export/." "$BASE/"
 STORE="$RUN_HOME/.codex/sessions/2026/09/15"
 mkdir -p "$STORE"
 meta='{"type":"session_meta","payload":{"cwd":"/home/demo/notes","model_provider":"OpenAI"}}'
-mkcodex() { # name  user-text
+mkcodex() { # name  first-user-text  filler-prefix  filler-count
+  local name="$1" first="$2" mark="$3" n="$4" i
   { printf '%s\n' "$meta"
     printf '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":%s}]}}\n' \
-      "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$2")"
+      "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$first")"
     printf '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"好的，方案如下。"}]}}\n'
-  } > "$STORE/rollout-$1.jsonl"
+    for ((i = 2; i <= n + 1; i++)); do
+      printf '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":%s}]}}\n' \
+        "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "${mark}第${i}项请再补充说明细节。")"
+      printf '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"好的，第%s项已补充。"}]}}\n' "$i"
+    done
+  } > "$STORE/rollout-$name.jsonl"
 }
-mkcodex plan-a '帮我做一份五一活动的营销策划，包含时间表和预算方案'
-mkcodex leak-b '这是我的密钥 sk-ant-abcdefghij0123456789，帮我顺便核对营销策划的预算方案'
+mkcodex short-c '帮我做一份五一活动的营销策划，包含时间表和预算方案' '' 0
+mkcodex plan-a '帮我做一份五一活动的营销策划，包含时间表和预算方案' '线下场地的活动流程' 5
+mkcodex leak-b '这是我的密钥 sk-ant-abcdefghij0123456789，帮我顺便核对营销策划的预算方案' '华北区域的报表口径' 5
 
 launcher() { # outdir  args...
   local out="$1"; shift
@@ -386,13 +404,16 @@ chk "the excluded row is absent from decisions.tsv" "0" \
   "$(awk 'index($0, "leak-b") { n++ } END { print n + 0 }' "$WORK/real/excl/decisions.tsv")"
 chk "and absent from the delivered manifest entries" "0" \
   "$(jq '[.[] | select(.source | test("leak-b"))] | length' "$m1")"
+has "the packaging bar kills the one-turn session" "$o1" "user_turns 1 < 5"
+chk "and the sub-floor session is absent from the delivery" "0" \
+  "$(jq '[.[] | select(.source | test("short-c"))] | length' "$m1")"
 
 # --allow-credentials: the explicit human decision includes the hit.
 o2="$(launcher "$WORK/real/allow" --allow-credentials)"
 chk "the explicit flag includes the hit" "0" "$?"
 has "with a warning that they will be exported" "$o2" "WILL be exported"
 m2="$WORK/real/allow/manifest.json"
-chk "both sessions delivered" "2" "$(jq 'length' "$m2")"
+chk "the two multi-turn survivors delivered" "2" "$(jq 'length' "$m2")"
 chk "the manifest records the human decision" "true" "$(jq -r '.[0].allow_credentials' "$m2")"
 chk "nothing was excluded" "0" "$(jq -r '.[0].credential_excluded' "$m2")"
 chk "and the exclusions list is empty" "0" "$(jq -r '.[0].credential_exclusions | length' "$m2")"
@@ -410,8 +431,11 @@ has "and names the posture flag" "$o3" "--credential-hard-gate"
 chk "and writes nothing at all" "absent" \
   "$(test -e "$WORK/real/hard" && echo present || echo absent)"
 
-# All-excluded edge: the honest report, no empty package.
+# All-excluded edge: the honest report, no empty package. Short-c is parked
+# with plan-a: the bar already removes it, and the edge being tested is the
+# credential exclusion, not the turn floor.
 mv "$STORE/rollout-plan-a.jsonl" "$WORK/plan-a.parked"
+mv "$STORE/rollout-short-c.jsonl" "$WORK/short-c.parked"
 o4="$(launcher "$WORK/real/none")"
 chk "an all-excluded run still succeeds honestly" "0" "$?"
 has "it says nothing remains" "$o4" "0 sessions remain"
@@ -419,6 +443,7 @@ has "and why" "$o4" "excluded as credential-bearing"
 chk "and no directory was written" "absent" \
   "$(test -e "$WORK/real/none" && echo present || echo absent)"
 mv "$WORK/plan-a.parked" "$STORE/rollout-plan-a.jsonl"
+mv "$WORK/short-c.parked" "$STORE/rollout-short-c.jsonl"
 
 # --confirm answered y: the batch-level checkpoint, batch_confirmed=true.
 o5="$(printf 'y\n' | launcher "$WORK/real/confirm" --confirm)"
@@ -436,7 +461,8 @@ has "the failure says why" "$o6" "no answer on stdin"
 chk "and nothing was written" "absent" \
   "$(test -e "$WORK/real/eof" && echo present || echo absent)"
 
-rm -f "$STORE/rollout-leak-b.jsonl" "$STORE/rollout-plan-a.jsonl"
+rm -f "$STORE/rollout-leak-b.jsonl" "$STORE/rollout-plan-a.jsonl" \
+  "$STORE/rollout-short-c.jsonl"
 
 printf '\n=====================\n'
 if [[ "$fail" -eq 0 ]]; then

@@ -62,12 +62,16 @@ policy keys it moves and why.
 
 A **direction** names a set of themes and, where the purchase constrains
 something, an `override` of its own — the noncode direction's `exclude_keywords`
-word list is what defines "non-code". It still carries no threshold: an
-override names a delta against the policy, never a bare number, and the runner
-refuses a direction file carrying policy keys rather than trusting it.
+word list is what defines "non-code". Override keys are deltas against the
+policy, and the runner refuses a direction file carrying policy keys at the
+top level rather than trusting it. One deliberate number has entered the
+layer since (decision of 2026-09-21): the nocode direction's packaging bar
+`min_user_turns` — the purchase's own quality bar, aligned with the reference
+bundle's turn profile, because a floor of 0 would deliver one-shot stubs the
+customer's demo never contained.
 
 ```
-session-export-nocode/direction.json     four themes + root override (the non-code exclusion list); no numbers
+session-export-nocode/direction.json     four themes + root override (exclusion list + the packaging turn bar)
 ├── reads the base skill's scripts/policy.json   the shared quality standard
 └── and the base skill's themes/
     ├── role-play.json        in the direction

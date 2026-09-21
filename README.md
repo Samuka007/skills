@@ -49,13 +49,15 @@ npx.cmd --yes skills@latest add Samuka007/skills --skill session-export-nocode -
 ```bash
 mkdir -p exports/nocode-<YYYYMMDD-HHMMSS>
 bash "$HOME/.agents/skills/session-export-nocode/scripts/session-export-nocode.sh" \
-  --out <上面的导出目录> --agent both --min-lines 0
+  --out <上面的导出目录>
 ```
 
 规则：
 
 - **默认即无人值守（yolo）**：不需要任何短语，也禁止手工追加 `--yolo`
   或改用基础技能的人工筛选流程代替方向流程。
+- **筛选 bar 已内置在方向包里**（与 demo 数据的口径对齐）：命令行不传
+  任何筛选阈值，也不得为凑数量放宽它。
 - 用户明确要求"先让我确认"时，才加 `--confirm`（会出现 `[y/N]`，交给用户）。
 - 禁止：修改 `policy.json`、`themes/`、`direction.json` 或任何筛选产物；
   传递 `--allow-credentials`；用模型语义筛选会话。
